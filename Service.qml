@@ -140,6 +140,11 @@ Item {
       notifiedLevel = 0
       outlookLevel = 0
       outlookAtClock = ""
+      storeLatch(0)
+    } else {
+      // Learning where we are is the other half of the stored latch, and it can
+      // arrive after the file does.
+      adoptLatch()
     }
 
     if (hasLocation && alertsEnabled) checkNow()
@@ -402,9 +407,97 @@ Item {
   // situation that worsens still escalates.
   property int notifiedLevel: 0
 
+  // The latch has to outlive the service, because the service does not outlive
+  // much. Any plugin writing inside its own directory reloads every plugin,
+  // and a reload destroys this service and builds a new one whose latch starts
+  // at zero — so the storm already announced is announced again, seconds
+  // later, word for word. One session saw four identical severe-storm toasts
+  // in twelve seconds while two unrelated plugins touched their own files
+  // during startup. A shell restart during weather does the same thing.
+  //
+  // What is remembered is the level and the place, not the forecast slot the
+  // reading came from. The slot slides forward as the window moves, so keying
+  // on it would call the same storm new every few minutes. A worsening storm
+  // still escalates, because a higher level does not match a lower stored one.
+  //
+  // The record expires, because a latch that never lets go is indistinguishable
+  // from an alert that never worked. Three hours is past the far edge of the
+  // longest lead this plugin can be configured for, so anything older belongs
+  // to different weather and deserves to be announced.
+  //
+  // Keyed off a binding rather than off `locationKey`: that one is written by
+  // the location change handler, which can run before the `hasLocation`
+  // binding it consults has been re-evaluated, leaving it empty for the life
+  // of a session. A binding is always current by the time a forecast lands.
+  readonly property string latchPlaceKey: hasLocation
+    ? location.latitude + "," + location.longitude + "|" + locationName
+    : ""
+  readonly property int latchMaxAgeMs: 3 * 60 * 60 * 1000
+  property bool latchLoaded: false
+  property var latchRecord: null
+  property bool latchEvaluatePending: false
+
+  FileView {
+    id: latchFile
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/detailed-weather-alert.json"
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.receiveLatch(text())
+    onLoadFailed: root.receiveLatch("")
+  }
+
+  function receiveLatch(text) {
+    var record = null
+    try {
+      record = JSON.parse(String(text || ""))
+    } catch (e) {
+      record = null
+    }
+    latchRecord = record && typeof record === "object" ? record : null
+    latchLoaded = true
+    adoptLatch()
+
+    // A check can finish before the file does. Holding the verdict rather than
+    // dropping it means the first reading of a session is still acted on, once
+    // the service knows what it has already said.
+    if (latchEvaluatePending) {
+      latchEvaluatePending = false
+      evaluateAlert()
+    }
+  }
+
+  // Take up the stored latch once both halves are known. This file and the
+  // location file load independently and either can win, so adoption is
+  // attempted from both sides rather than assuming an order.
+  function adoptLatch() {
+    if (!latchLoaded || latchPlaceKey === "") return
+    var record = latchRecord
+    if (!record) return
+    var level = Number(record.level) || 0
+    if (level <= 0) return
+    if (String(record.location || "") !== latchPlaceKey) return
+    if (Date.now() - (Number(record.at) || 0) >= latchMaxAgeMs) return
+    if (level > notifiedLevel) notifiedLevel = level
+  }
+
+  function storeLatch(level) {
+    latchRecord = level > 0
+      ? { location: latchPlaceKey, level: level, at: Date.now() }
+      : null
+    latchFile.setText(JSON.stringify(latchRecord || { level: 0 }) + "\n")
+  }
+
   function evaluateAlert() {
     if (!alertsEnabled) {
       notifiedLevel = 0
+      return
+    }
+
+    // Deciding before the stored latch has been read is deciding without
+    // knowing what has already been said, which is how the same storm gets
+    // announced twice.
+    if (!latchLoaded) {
+      latchEvaluatePending = true
       return
     }
 
@@ -414,12 +507,20 @@ Item {
       // Clear the latch only once conditions drop under the threshold, so a
       // reading that flickers around the boundary cannot re-notify.
       notifiedLevel = 0
+      storeLatch(0)
       return
     }
+
+    // Every in-memory reset that was not a deliberate clear — settings briefly
+    // regressing to nothing, a service rebuilt by a plugin reload — is undone
+    // here before the decision is made. A deliberate clear empties the stored
+    // record too, so nothing that should have been forgotten comes back.
+    adoptLatch()
 
     if (outlookLevel <= notifiedLevel) return
 
     notifiedLevel = outlookLevel
+    storeLatch(outlookLevel)
     notify(outlookLevel, outlookLeadMinutes)
   }
 
@@ -587,6 +688,7 @@ Item {
     if (first || (!thresholdMoved && !radiusMoved)) return
 
     notifiedLevel = 0
+    storeLatch(0)
     if (radiusMoved) {
       if (hasLocation && alertsEnabled) checkNow()
     } else {
@@ -601,7 +703,12 @@ Item {
       outlookLevel = 0
       forecastProc.running = false
       checking = false
+      // Only a deliberate switch-off clears the stored latch. Settings that
+      // have not arrived yet read as `alertsEnabled` false without meaning it,
+      // and clearing on those would put the repeats straight back.
+      if (settingsReady) storeLatch(0)
     } else if (hasLocation) {
+      adoptLatch()
       checkNow()
     }
   }
