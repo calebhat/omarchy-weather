@@ -34,7 +34,9 @@ stock weather contract. See [NOTICE.md](NOTICE.md).
 Intended to stand in for the built-in weather icon in the centre of the
 bar (disable `omarchy.weather` so you only have one pill). The icon shows
 the current condition glyph for your **saved home** location, even while
-the panel is peeking at another city.
+the panel is peeking at another city. Optional **Show temperature** (off
+by default) puts the current reading next to the glyph at the same type
+size as the clock.
 
 | Input | Action |
 |-------|--------|
@@ -67,8 +69,8 @@ Optional `{lat}` and `{lon}` are filled from the city you are viewing.
 ### Settings
 
 **Settings** (top-right on the forecast) opens units, 12- or 24-hour clocks,
-the radar website, and storm alerts. **Done** (top-left on Settings) returns
-to the forecast. Home location stays the pin on the forecast.
+the radar website, bar temperature, and storm alerts. **Done** (top-left on
+Settings) returns to the forecast. Home location stays the pin on the forecast.
 
 ### Home location
 
@@ -133,6 +135,7 @@ the bar settings form). `shell.json` hot-reloads on save.
 | `showSun` | `true` | Sunrise / sunset cell |
 | `showAirQuality` | `true` | US AQI cell |
 | `showFeelsLike` | `true` | Feels-like in the header |
+| `showBarTemp` | `false` | Current temperature next to the bar glyph |
 | `alertsEnabled` | `false` | Storm alerts for home |
 | `alertRadiusKm` | `100` | How far around home to sample |
 | `alertMinIntensity` | `Heavy` | `Light` / `Moderate` / `Heavy` / `Severe` |

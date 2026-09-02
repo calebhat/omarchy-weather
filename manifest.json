@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.calebhat.weather",
   "name": "Detailed Weather",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "author": "calebhat",
   "license": "MIT",
   "description": "Replaces the Omarchy weather pill with today's remaining-hour forecast, a ten-day outlook, city peek, and Open radar in the default browser.",
@@ -30,6 +30,7 @@
       "showMetrics": true,
       "showSun": true,
       "showFeelsLike": true,
+      "showBarTemp": false,
       "alertsEnabled": false,
       "alertRadiusKm": 100,
       "alertMinIntensity": "Heavy",
@@ -91,6 +92,13 @@
         "type": "boolean",
         "label": "Show feels-like",
         "defaultValue": true
+      },
+      {
+        "key": "showBarTemp",
+        "type": "boolean",
+        "label": "Show temperature on the bar",
+        "defaultValue": false,
+        "description": "Current temperature next to the condition glyph, using the same type size as the clock."
       },
       {
         "key": "alertsEnabled",
