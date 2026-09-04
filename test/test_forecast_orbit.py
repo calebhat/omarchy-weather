@@ -8,6 +8,7 @@ import unittest
 
 PLUGIN = Path(__file__).parents[1]
 PANEL = (PLUGIN / "Panel.qml").read_text(encoding="utf-8")
+BAR_WIDGET = (PLUGIN / "BarWidget.qml").read_text(encoding="utf-8")
 LOADER = (PLUGIN / "MorphingWeatherLoader.qml").read_text(encoding="utf-8")
 WAVE_WIPE = (PLUGIN / "WeatherWaveWipe.qml").read_text(encoding="utf-8")
 ENERGY_CORE = (PLUGIN / "WeatherEnergyCore.qml").read_text(encoding="utf-8")
@@ -16,6 +17,28 @@ MANIFEST = json.loads((PLUGIN / "manifest.json").read_text(encoding="utf-8"))
 
 
 class ForecastOrbitTests(unittest.TestCase):
+    def test_bar_shows_saved_home_temperature_in_fahrenheit_with_small_condition(self):
+        for contract in (
+            'property string homeTempF: ""',
+            "readonly property string barTemperatureF: homeTempF",
+            "readonly property string barConditionGlyph: homeLabel || label",
+            "function rememberHomeCurrent(currentCondition, provisionalIcon)",
+            "Model.roundedTemp(currentCondition.temp_F)",
+        ):
+            self.assertIn(contract, PANEL)
+
+        for contract in (
+            "WidgetButton {",
+            'panelLoader.item.barTemperatureF + "°F"',
+            "font.pixelSize: Style.font.bodySmall",
+            "text: panelLoader.item ? panelLoader.item.barConditionGlyph",
+            "font.pixelSize: Style.font.caption",
+        ):
+            self.assertIn(contract, BAR_WIDGET)
+
+        self.assertIn("bar temperature is always Fahrenheit", README)
+        self.assertEqual(MANIFEST["version"], "1.3.1")
+
     def test_hot_reload_bar_teardown_has_fallback(self):
         for contract in (
             "id: fallbackBar",

@@ -182,6 +182,28 @@ Panel {
   property string label: ""
   property string homeLabel: ""
   readonly property string barLabel: homeLabel || label
+  property string homeTempF: ""
+  readonly property string barTemperatureF: homeTempF
+  readonly property string barConditionGlyph: homeLabel || label
+
+  // The forecast panel can follow the user's unit preference, but the compact
+  // outside-temperature readout in the bar is intentionally always Fahrenheit.
+  // Keep its value paired with the saved home's icon so peeking at another city
+  // cannot quietly replace either half of the bar reading.
+  function rememberHomeCurrent(currentCondition, provisionalIcon) {
+    if (root.peeking || !currentCondition) return
+
+    var nextIcon = provisionalIcon
+      ? Model.provisionalCurrentIcon(currentCondition, root.homeLabel || root.label)
+      : Model.currentIcon(currentCondition, root.homeLabel || root.label)
+    if (nextIcon !== "") {
+      root.label = nextIcon
+      root.homeLabel = nextIcon
+    }
+
+    var nextTempF = Model.roundedTemp(currentCondition.temp_F)
+    if (nextTempF !== "") root.homeTempF = nextTempF
+  }
 
   // wttr's current conditions when available; open-meteo's (bundled with the
   // much faster daily forecast fetch) fill the hero while wttr is in flight.
@@ -1189,9 +1211,8 @@ Panel {
         try {
           var parsed = JSON.parse(raw)
           root.report = parsed
-          if (!root.peeking && !root.hasHomeCoordinates)
-            root.label = Model.provisionalCurrentIcon(parsed.current_condition && parsed.current_condition[0], root.label)
-          if (!root.peeking) root.homeLabel = root.label
+          if (!root.hasHomeCoordinates)
+            root.rememberHomeCurrent(parsed.current_condition && parsed.current_condition[0], true)
           root.forecastRetries = 0
           if (Model.weatherResponseCompletesSave(root.hasConfiguredCoordinates, "wttr"))
             root.finishSavingLocation()
@@ -1267,10 +1288,7 @@ Panel {
           var parsedCurrent = Model.openMeteoCurrentCondition(parsed)
           root.dailyForecastReport = parsed
           root.forecastFetchedAt = Qt.formatTime(new Date(), root.use12Hour ? "h:mm AP" : "HH:mm")
-          if (!root.peeking) {
-            root.label = Model.currentIcon(parsedCurrent, root.label)
-            root.homeLabel = root.label
-          }
+          root.rememberHomeCurrent(parsedCurrent, false)
           root.dailyForecastRetries = 0
           root.completeWeatherTransition()
           if (!root.peeking && Model.weatherResponseCompletesSave(root.hasHomeCoordinates, "open-meteo"))

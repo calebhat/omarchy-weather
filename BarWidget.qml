@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import qs.Commons
 import qs.Ui
 
@@ -56,6 +57,8 @@ BarWidget {
   visible: true
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
+  readonly property real openPanelIndicatorWidth: weatherContent.implicitWidth
+  readonly property real openPanelIndicatorHeight: weatherContent.implicitHeight
 
   onBarChanged: injectPanel()
   onSettingsChanged: { injectPanel(); syncService() }
@@ -72,12 +75,14 @@ BarWidget {
     }
   }
 
-  BarIconButton {
+  WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: panelLoader.item ? (panelLoader.item.barLabel || panelLoader.item.label || "") : ""
-    slotSize: Style.bar.statusSlot
+    labelVisible: false
+    hasVisualContent: true
+    fixedWidth: root.vertical ? -1 : weatherContent.implicitWidth + Style.space(12)
+    fixedHeight: root.vertical ? weatherContent.implicitHeight + Style.space(8) : -1
     tooltipText: "Weather — click forecast, middle refresh, right notify"
 
     onPressed: function(b) {
@@ -85,6 +90,36 @@ BarWidget {
         if (panelLoader.item && panelLoader.item.notifyCurrent) panelLoader.item.notifyCurrent()
       } else if (b === Qt.MiddleButton) root.refresh()
       else root.togglePanel()
+    }
+
+    GridLayout {
+      id: weatherContent
+      anchors.centerIn: parent
+      columns: root.vertical ? 1 : 2
+      rowSpacing: Style.space(1)
+      columnSpacing: Style.space(3)
+
+      Text {
+        Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
+        textFormat: Text.PlainText
+        text: panelLoader.item && panelLoader.item.barTemperatureF !== ""
+          ? panelLoader.item.barTemperatureF + "°F"
+          : "…°F"
+        color: button.foreground
+        font.family: button.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        font.weight: Font.DemiBold
+      }
+
+      Text {
+        Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
+        visible: text !== ""
+        textFormat: Text.PlainText
+        text: panelLoader.item ? panelLoader.item.barConditionGlyph : ""
+        color: button.foreground
+        font.family: button.fontFamily
+        font.pixelSize: Style.font.caption
+      }
     }
   }
 }

@@ -33,9 +33,10 @@ stock weather contract. See [NOTICE.md](NOTICE.md).
 ### Bar pill
 
 Intended to stand in for the built-in weather icon in the centre of the
-bar (disable `omarchy.weather` so you only have one pill). The icon shows
-the current condition glyph for your **saved home** location, even while
-the panel is peeking at another city.
+bar (disable `omarchy.weather` so you only have one pill). The pill shows
+the current outside temperature in **°F** with a smaller current-condition
+glyph for your **saved home** location, even while the panel is peeking at
+another city. The bar stays Fahrenheit even when the panel uses metric units.
 
 | Input | Action |
 |-------|--------|
@@ -76,7 +77,8 @@ rising mark, while cooling flashes ice-blue with a falling mark. Below that:
 The orbit entrance and weather wipe run at 1.5× their original speed, keeping
 the visual hit while getting the forecast under your eyes sooner.
 
-Units follow `auto` (locale and country), `metric`, or `imperial`.
+Forecast-panel units follow `auto` (locale and country), `metric`, or
+`imperial`; the compact bar temperature is always Fahrenheit.
 
 ### Open radar
 
