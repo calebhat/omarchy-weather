@@ -254,10 +254,34 @@ function parseNwsPoints(data) {
 function nwsEventLevel(event) {
   var name = String(event || "").toLowerCase()
 
+  // Ruled out before anything else, because the flood rules below would match
+  // these on the word alone. Coastal and lakeshore flooding is water pushed
+  // ashore by tide, surge or wind — it happens on cloudless days at high tide,
+  // and is the local office confirming a forecast of rain in no sense at all.
+  // Checked against every alert in force nationwide on 2026-09-07: four Coastal
+  // Flood Advisories and five Coastal Flood Statements were live, and a Coastal
+  // Flood Warning would have reached "flood warning" below and scored Heavy.
+  if (name.indexOf("coastal flood") !== -1) return 0
+  if (name.indexOf("lakeshore flood") !== -1) return 0
+
   if (name.indexOf("tornado warning") !== -1) return 4
   if (name.indexOf("severe thunderstorm warning") !== -1) return 4
   if (name.indexOf("flash flood warning") !== -1) return 4
   if (name.indexOf("extreme wind warning") !== -1) return 4
+
+  // Tropical systems, which the first pass missed entirely — eight Tropical
+  // Storm Warnings and seven Hurricane Watches were in force nationwide on
+  // 2026-09-07 and every one of them scored zero. They are among the wettest
+  // things the service issues, so a coast under one was getting no
+  // corroboration at all. Typhoon is the same rule for the Pacific territories,
+  // which are NWS offices too.
+  if (name.indexOf("hurricane warning") !== -1) return 4
+  if (name.indexOf("typhoon warning") !== -1) return 4
+  if (name.indexOf("tropical storm warning") !== -1) return 4
+
+  if (name.indexOf("hurricane watch") !== -1) return 3
+  if (name.indexOf("typhoon watch") !== -1) return 3
+  if (name.indexOf("tropical storm watch") !== -1) return 3
 
   if (name.indexOf("tornado watch") !== -1) return 3
   if (name.indexOf("severe thunderstorm watch") !== -1) return 3

@@ -149,3 +149,76 @@ test("a covered point yields the office's own hourly grid", () => {
   assert.equal(parsed.supported, true)
   assert.equal(parsed.hourlyUrl, "https://api.weather.gov/gridpoints/FFC/51,93/forecast/hourly")
 })
+
+// --- the alert vocabulary, as actually issued --------------------------------
+//
+// Every distinct event type in force across the United States at 06:34 UTC on
+// 2026-09-07, taken from api.weather.gov/alerts/active (221 alerts, 26 types).
+// Written from the live feed rather than from memory, which is how the two
+// mistakes below were found: the first pass scored every tropical system zero,
+// and matched "Coastal Flood Advisory" on the word "flood".
+const LIVE_EVENTS = {
+  // Rain, and how much of it the office is committing to.
+  "Severe Thunderstorm Warning": 4,
+  "Flash Flood Warning": 4,
+  "Tropical Storm Warning": 4,
+  "Hurricane Watch": 3,
+  "Flood Warning": 3,
+  "Flood Watch": 2,
+  "Flood Advisory": 2,
+  "Special Weather Statement": 2,
+
+  // Water, but not from the sky. Coastal flooding is tide and surge; it
+  // happens under a clear sky and must never read as a forecast of rain.
+  "Coastal Flood Advisory": 0,
+  "Coastal Flood Statement": 0,
+  "High Surf Advisory": 0,
+  "High Surf Warning": 0,
+  "Beach Hazards Statement": 0,
+
+  // Weather, but not precipitation.
+  "Heat Advisory": 0,
+  "Extreme Heat Warning": 0,
+  "Freeze Warning": 0,
+  "Gale Warning": 0,
+  "Gale Watch": 0,
+  "Small Craft Advisory": 0,
+  "Lake Wind Advisory": 0,
+  "Red Flag Warning": 0,
+  "Air Quality Alert": 0,
+
+  // Not a forecast at all.
+  "Hydrologic Outlook": 0,
+  "Tropical Cyclone Local Statement": 0,
+  "Test Message": 0,
+
+  // Marine convection. Real thunderstorms, but issued for marine zones rather
+  // than for anywhere someone is standing, so it is deliberately left out.
+  "Special Marine Warning": 0,
+}
+
+for (const [event, expected] of Object.entries(LIVE_EVENTS)) {
+  test(`"${event}" scores ${expected}`, () => {
+    assert.equal(RadarModel.nwsEventLevel(event), expected)
+  })
+}
+
+test("a tropical system is not silence", () => {
+  // The gap that eight live Tropical Storm Warnings went through.
+  for (const event of ["Hurricane Warning", "Typhoon Warning", "Tropical Storm Warning"]) {
+    assert.equal(RadarModel.nwsEventLevel(event), 4, event)
+  }
+  for (const event of ["Hurricane Watch", "Typhoon Watch", "Tropical Storm Watch"]) {
+    assert.equal(RadarModel.nwsEventLevel(event), 3, event)
+  }
+})
+
+test("coastal flooding is ruled out before the flood rules can match it", () => {
+  // Ordering regression: "Coastal Flood Warning" contains "flood warning".
+  assert.equal(RadarModel.nwsEventLevel("Coastal Flood Warning"), 0)
+  assert.equal(RadarModel.nwsEventLevel("Coastal Flood Watch"), 0)
+  assert.equal(RadarModel.nwsEventLevel("Lakeshore Flood Warning"), 0)
+  // ...while inland flooding still counts.
+  assert.equal(RadarModel.nwsEventLevel("Flood Warning"), 3)
+  assert.equal(RadarModel.nwsEventLevel("Flash Flood Warning"), 4)
+})
