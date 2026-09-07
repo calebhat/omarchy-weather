@@ -71,7 +71,10 @@ BarWidget {
     visible: false
     onLoaded: {
       root.injectPanel()
-      Qt.callLater(root.injectPanel)
+      // Probed at execution time: a plugin rebuild can begin between the queue
+      // and the call, and a bare reference would evaluate into the widget being
+      // torn down. injectPanel is idempotent, so there is nothing to coalesce.
+      Qt.callLater(function() { if (root && root.injectPanel) root.injectPanel() })
     }
   }
 

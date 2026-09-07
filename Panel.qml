@@ -522,7 +522,21 @@ Panel {
   }
 
   onReportTempNumChanged: syncAnimatedTemperature()
-  onTempUnitChanged: Qt.callLater(syncAnimatedTemperature)
+
+  // Deferred so the unit flip and the number that follows it settle into one
+  // animation, and coalesced so a flip back and forth does not queue two.
+  // A Timer rather than Qt.callLater because it is a child of this panel and
+  // dies with it — see scheduleRefresh for the teardown this plugin actually
+  // sees. restart() collapses repeats exactly as callLater's identity
+  // coalescing did.
+  Timer {
+    id: tempUnitTimer
+    interval: 0
+    repeat: false
+    onTriggered: root.syncAnimatedTemperature()
+  }
+
+  onTempUnitChanged: tempUnitTimer.restart()
 
   // Keep the shell theme as the base, then tint it toward a recognizable
   // condition family. These colors only appear at low opacity, so the panel
@@ -1152,6 +1166,13 @@ Panel {
     if (!geocodeProc.running) startGeocode()
   }
 
+  Timer {
+    id: geocodeChaseTimer
+    interval: 0
+    repeat: false
+    onTriggered: root.startGeocode()
+  }
+
   function startGeocode() {
     geocodeActiveQuery = geocodePendingQuery
     geocodeProc.command = Model.curlGet(
@@ -1364,7 +1385,11 @@ Panel {
         root.locationSuggestions = root.editingLocation ? Model.parseGeocodingResults(text) : []
         root.suggestionIndex = 0
         root.suggestionPicked = false
-        if (root.geocodePendingQuery !== root.geocodeActiveQuery) Qt.callLater(root.startGeocode)
+        // The query moved on while this one was out. Chase it, coalesced and
+        // owned, so a burst of typing ends in one more request rather than one
+        // per keystroke — and so a panel closed mid-search queues nothing into
+        // its own teardown.
+        if (root.geocodePendingQuery !== root.geocodeActiveQuery) geocodeChaseTimer.restart()
       }
     }
   }

@@ -14,7 +14,14 @@ import re
 import unittest
 
 
-PANEL = (Path(__file__).parents[1] / "Panel.qml").read_text(encoding="utf-8")
+PLUGIN = Path(__file__).parents[1]
+PANEL = (PLUGIN / "Panel.qml").read_text(encoding="utf-8")
+QML = {p.name: p.read_text(encoding="utf-8") for p in PLUGIN.glob("*.qml")}
+
+# Qt.callLater(someFunction) — a bare reference rather than a closure or an
+# owned Timer. This is the shape that keeps evaluating into a context the shell
+# is tearing down.
+BARE_DEFERRAL = re.compile(r"Qt\.callLater\(\s*(?:root\.)?[A-Za-z_][\w.]*\s*\)")
 
 
 class PanelLifecycleTests(unittest.TestCase):
@@ -45,6 +52,28 @@ class PanelLifecycleTests(unittest.TestCase):
 
     def test_every_deferred_refresh_goes_through_the_guard(self):
         self.assertGreaterEqual(PANEL.count("scheduleRefresh"), 4)
+
+    def test_nothing_in_the_plugin_defers_a_bare_function_reference(self):
+        """Every deferral is a guarded closure or a Timer this object owns.
+
+        A Timer is a child of the object, so it is destroyed with it; a bare
+        reference handed to Qt.callLater is not, and outlives it. Where the
+        deferral also needs coalescing — settings settling, a unit flip, a
+        geocode chasing the query — the Timer is the only option that keeps
+        both, since a fresh closure per call has no identity to collapse on.
+        """
+        offenders = {
+            name: BARE_DEFERRAL.findall(text)
+            for name, text in QML.items() if BARE_DEFERRAL.search(text)
+        }
+        self.assertEqual(offenders, {})
+
+    def test_the_coalescing_deferrals_are_owned_timers(self):
+        for timer in ("alertConfigTimer", "tempUnitTimer", "geocodeChaseTimer"):
+            with self.subTest(timer):
+                source = "\n".join(QML.values())
+                self.assertRegex(source, rf"Timer \{{\s*\n\s*id: {timer}")
+                self.assertIn(f"{timer}.restart()", source)
 
 
 if __name__ == "__main__":

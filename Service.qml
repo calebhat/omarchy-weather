@@ -448,6 +448,28 @@ Item {
   property int nwsOutstanding: 0
   property bool nwsPending: false
 
+  // Which place each request in flight was asked about. A response is only an
+  // answer to the question that was asked, and the coordinates can move while
+  // curl is running — the same discipline `requestedFor` applies to the model
+  // forecast. Without it, a points lookup that lands after a move installs the
+  // *old* city's gridpoint URL, and every later reading corroborates somewhere
+  // new against the forecast office of somewhere else.
+  property string nwsPointsFor: ""
+  property string nwsRequestedFor: ""
+
+  // Whether anything in the current cycle actually came back with data.
+  //
+  // This is what bounds staleness, and it has to be tracked rather than
+  // assumed. finishAlerts and finishHourly deliberately keep the previous
+  // answer when a request fails — "no warning in force" is a claim a failed
+  // request is not entitled to make — so a cycle where both fail leaves the old
+  // figures in place. Stamping the clock on that cycle anyway would mark those
+  // figures fresh, and a service that lost NWS for an afternoon would go on
+  // presenting a morning's "no rain expected" as current, indefinitely. The
+  // 45-minute limit in nwsSnapshot would never be reached, and a real storm
+  // could be suppressed by a reading nobody could still vouch for.
+  property bool nwsCycleAnswered: false
+
   readonly property int nwsWindowHours: Math.max(2, Math.ceil(leadMinutes / 60))
 
   function nwsSnapshot() {
@@ -474,6 +496,9 @@ Item {
     nwsPop = -1
     nwsStamp = 0
     nwsOutstanding = 0
+    nwsPointsFor = ""
+    nwsRequestedFor = ""
+    nwsCycleAnswered = false
   }
 
   function refreshNws() {
@@ -488,6 +513,7 @@ Item {
     if (!nwsResolved) {
       if (nwsPointsProc.running) return
       nwsOutstanding++
+      nwsPointsFor = latchPlaceKey
       nwsPointsProc.answered = false
       nwsPointsProc.command = RadarModel.nwsCurlGet(
         RadarModel.nwsPointsUrl(lat, lon), 12, RadarModel.MAX_ALERT_JSON_BYTES)
@@ -499,6 +525,8 @@ Item {
     if (nwsAlertsProc.running || nwsHourlyProc.running) return
 
     nwsPlaceKey = latchPlaceKey
+    nwsRequestedFor = latchPlaceKey
+    nwsCycleAnswered = false
     nwsOutstanding += 2
     nwsAlertsProc.answered = false
     nwsHourlyProc.answered = false
@@ -516,8 +544,9 @@ Item {
   function nwsAnswered() {
     nwsOutstanding = Math.max(0, nwsOutstanding - 1)
     if (nwsOutstanding > 0) return
-    // Both halves are in, so the pair can be stamped as one opinion.
-    if (nwsSupported) nwsStamp = Date.now()
+    // Both halves are in, so the pair can be stamped as one opinion — but only
+    // if one of them brought something back. See nwsCycleAnswered.
+    if (nwsSupported && nwsCycleAnswered) nwsStamp = Date.now()
     if (nwsPending) settleOutlook()
   }
 
@@ -557,6 +586,13 @@ Item {
   }
 
   function finishPoints(data) {
+    // Answered about somewhere we have since left. Applying it would install
+    // that place's forecast office for this one.
+    if (nwsPointsFor !== latchPlaceKey) {
+      nwsAnswered()
+      return
+    }
+
     // A point outside the United States answers 404 and curl reports failure,
     // which arrives here as null. That is an answer — "no local office" — and
     // is recorded so it is not asked again every ten minutes.
@@ -601,13 +637,19 @@ Item {
   }
 
   function finishAlerts(data) {
+    if (nwsRequestedFor !== latchPlaceKey) {
+      nwsAnswered()
+      return
+    }
     // A feed that did not arrive leaves the previous answer standing rather
     // than clearing it: "no warning in force" is a claim, and a failed request
-    // is not entitled to make it.
+    // is not entitled to make it. What it must not do is refresh the clock on
+    // that standing answer, which is what nwsCycleAnswered records.
     if (data) {
       var outlook = RadarModel.nwsAlertOutlook(data)
       nwsAlertLevel = outlook.level
       nwsAlertEvent = outlook.event
+      nwsCycleAnswered = true
     }
     nwsAnswered()
   }
@@ -636,7 +678,14 @@ Item {
   }
 
   function finishHourly(data) {
-    if (data) nwsPop = RadarModel.nwsMaxPop(data, nwsWindowHours)
+    if (nwsRequestedFor !== latchPlaceKey) {
+      nwsAnswered()
+      return
+    }
+    if (data) {
+      nwsPop = RadarModel.nwsMaxPop(data, nwsWindowHours)
+      nwsCycleAnswered = true
+    }
     nwsAnswered()
   }
 
@@ -960,13 +1009,32 @@ Item {
   onAlertRadiusKmChanged: applyAlertConfig()
   onSettingsReadyChanged: applyAlertConfig()
 
-  // Coalesced to the end of the turn. Bindings re-evaluate one at a time, so a
-  // single settings arrival moves the radius and the threshold in separate
-  // steps; comparing at each step would record the first as the baseline and
-  // read the second as a decision nobody made. Qt.callLater collapses repeated
-  // calls into one, so the comparison sees a settled state.
+  // Coalesced. Bindings re-evaluate one at a time, so a single settings arrival
+  // moves the radius and the threshold in separate steps; comparing at each
+  // step would record the first as the baseline and read the second as a
+  // decision nobody made — which clears the alert latch for a decision nobody
+  // took.
+  //
+  // A zero-interval Timer rather than Qt.callLater, for two reasons that point
+  // the same way. restart() collapses repeated calls exactly as callLater's
+  // identity-based coalescing did, so the comparison still sees a settled
+  // state. And a Timer is a child of this object, so it is destroyed with it —
+  // where a queued callLater on a bare function reference goes on to evaluate
+  // in a context the shell is already tearing down. Every plugin rebuild is
+  // that window, and there are many.
+  //
+  // The coalescing is the reason this is not a guarded closure like
+  // Panel.qml's scheduleRefresh: a fresh closure per call has no identity to
+  // collapse on, so each binding step would arrive as its own decision.
+  Timer {
+    id: alertConfigTimer
+    interval: 0
+    repeat: false
+    onTriggered: root.syncAlertConfig()
+  }
+
   function applyAlertConfig() {
-    Qt.callLater(syncAlertConfig)
+    alertConfigTimer.restart()
   }
 
   function syncAlertConfig() {
