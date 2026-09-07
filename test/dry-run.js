@@ -23,13 +23,23 @@ if (!lat || !lon) {
   console.error("usage: node test/dry-run.js <lat> <lon>")
   process.exit(2)
 }
+// Checked here rather than left to the service: unparseable coordinates
+// otherwise print "point NaN,NaN" and then a confident report about nowhere.
+if (!Number.isFinite(Number(lat)) || Math.abs(Number(lat)) > 90 ||
+    !Number.isFinite(Number(lon)) || Math.abs(Number(lon)) > 180) {
+  console.error(`not a coordinate on this planet: ${lat},${lon}`)
+  process.exit(2)
+}
 
 const LEVELS = ["clear", "light", "moderate", "heavy", "severe"]
 
+// stderr is discarded because the most interesting failure is not one: a point
+// outside the United States answers 404, and curl announcing that is the tool
+// working, not a problem to show the reader.
 function fetchJson(command) {
   try {
     return JSON.parse(execFileSync(command[0], command.slice(1), {
-      encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }))
+      encoding: "utf8", maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] }))
   } catch (error) {
     return null
   }

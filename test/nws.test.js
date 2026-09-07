@@ -222,3 +222,75 @@ test("coastal flooding is ruled out before the flood rules can match it", () => 
   assert.equal(RadarModel.nwsEventLevel("Flood Warning"), 3)
   assert.equal(RadarModel.nwsEventLevel("Flash Flood Warning"), 4)
 })
+
+// --- boundaries --------------------------------------------------------------
+
+test("the probability thresholds are inclusive at the number the README prints", () => {
+  const at = pop => RadarModel.corroborate(4, covered({ maxPop: pop }))
+  // README: likely >=50, possible 30-49, unlikely <30.
+  assert.equal(at(RadarModel.NWS_POP_CONFIRM).source, "model")
+  assert.equal(at(RadarModel.NWS_POP_CONFIRM - 1).source, "downgraded")
+  assert.equal(at(RadarModel.NWS_POP_PARTIAL).source, "downgraded")
+  assert.equal(at(RadarModel.NWS_POP_PARTIAL - 1).source, "suppressed")
+})
+
+test("zero percent is an opinion; below zero is the absence of one", () => {
+  assert.equal(RadarModel.corroborate(4, covered({ maxPop: 0 })).level, 0)
+  assert.equal(RadarModel.corroborate(4, covered({ maxPop: -1 })).level, 4)
+})
+
+test("a level never leaves the gate outside its own bands", () => {
+  // A level above the top band would name itself Severe and then sit in the
+  // latch above every real reading, so no genuine storm could re-notify.
+  for (const hostile of [99, -5, NaN, Infinity, "3", 2.6, null, undefined]) {
+    for (const verdict of [
+      RadarModel.corroborate(hostile, { supported: false }),
+      RadarModel.corroborate(0, covered({ alertLevel: hostile, alertEvent: "x" })),
+    ]) {
+      assert.ok(Number.isInteger(verdict.level), `${hostile} -> ${verdict.level}`)
+      assert.ok(verdict.level >= 0 && verdict.level <= 4, `${hostile} -> ${verdict.level}`)
+    }
+  }
+})
+
+test("a downgrade lands under the default threshold, whatever the model said", () => {
+  // The cap is only worth anything if it is below the level that interrupts.
+  for (let level = 0; level <= 4; level++) {
+    const verdict = RadarModel.corroborate(level, covered({ maxPop: 35 }))
+    assert.ok(verdict.level < RadarModel.nwsEventLevel("Flood Warning"),
+      `model ${level} capped to ${verdict.level}, which still alerts`)
+  }
+})
+
+// --- hostile responses -------------------------------------------------------
+
+test("no malformed response can throw", () => {
+  const junk = [null, undefined, 0, "", [], {}, { properties: null }, { features: null },
+    { features: "x" }, { features: [null] }, { features: [{}] }, { features: [{ properties: null }] },
+    { properties: { periods: null } }, { properties: { periods: [{}] } },
+    { properties: { periods: [{ probabilityOfPrecipitation: null }] } }]
+  for (const bad of junk) {
+    RadarModel.nwsAlertOutlook(bad)
+    RadarModel.nwsMaxPop(bad, 2)
+    RadarModel.parseNwsPoints(bad)
+  }
+})
+
+test("the hourly URL is taken from the response, so it is checked like input", () => {
+  // It arrives in a response body and is then fetched. A look-alike host or a
+  // downgrade to http must not be followed.
+  for (const hostile of [
+    "https://api.weather.gov.evil.example/x",
+    "http://api.weather.gov/x",
+    "https://evil.example/api.weather.gov/x",
+    "//api.weather.gov/x",
+    "javascript:alert(1)",
+    "",
+  ]) {
+    assert.equal(RadarModel.parseNwsPoints({ properties: { forecastHourly: hostile } }).supported,
+      false, hostile)
+  }
+  assert.equal(RadarModel.parseNwsPoints({
+    properties: { forecastHourly: "https://api.weather.gov/gridpoints/FFC/51,93/forecast/hourly" }
+  }).supported, true)
+})

@@ -344,14 +344,27 @@ function nwsMaxPop(data, hours) {
 // so a source being unreachable, uncovered or stale can only ever decline to
 // help — never mute. The one path that lowers a reading is the one where the
 // office has actually looked and expects nothing.
+// Bands run 0 (clear) to 4 (severe), and a level leaving this function is read
+// by levelName, the bar summary, the notification and the latch. A value outside
+// the range would name itself "Severe" and then sit in the latch above every
+// real reading, so no genuine severe storm could ever exceed it and re-notify.
+// Nothing upstream can currently produce one — nwsEventLevel only ever returns a
+// band — but a level is a promise this function makes to four callers, and it is
+// cheaper to keep than to audit.
+function clampLevel(value) {
+  var level = Math.round(Number(value) || 0)
+  if (!isFinite(level) || level < 0) return 0
+  return level > 4 ? 4 : level
+}
+
 function corroborate(modelLevel, nws) {
-  var level = Number(modelLevel) || 0
+  var level = clampLevel(modelLevel)
   if (!nws || !nws.supported || !nws.fresh) return { level: level, source: "model", event: "" }
 
   // A warning in force outranks the model in both directions. It can raise a
   // quiet reading, which is the case the model misses — a storm the office can
   // see on radar and a coarse grid has not resolved.
-  var alertLevel = Number(nws.alertLevel) || 0
+  var alertLevel = clampLevel(nws.alertLevel)
   if (alertLevel > 0) {
     return {
       level: Math.max(level, alertLevel),
