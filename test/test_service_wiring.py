@@ -187,6 +187,18 @@ class LatchTests(unittest.TestCase):
         self.assertGreaterEqual(stores, clears - 1,
                                 "a reset that is not stored will be adopted back")
 
+    def test_a_level_off_disk_is_range_checked(self):
+        """The latch file is untrusted input — anything can write it.
+
+        A level above the top band would sit in the latch over every real
+        reading and silence the plugin. It is rejected rather than clamped down,
+        so an unusable record means "nothing announced" — one possible duplicate
+        instead of an indefinite silence.
+        """
+        body = body_of(SERVICE, "adoptLatch")
+        self.assertRegex(body, r"level <= 0 \|\| level > 4")
+        self.assertIn("isFinite(level)", body)
+
     def test_adoption_only_ever_raises_the_latch(self):
         body = body_of(SERVICE, "adoptLatch")
         self.assertIn("if (level > notifiedLevel)", body)

@@ -815,8 +815,17 @@ Item {
     if (!latchLoaded || latchPlaceKey === "") return
     var record = latchRecord
     if (!record) return
-    var level = Number(record.level) || 0
-    if (level <= 0) return
+    // Range-checked, because this arrives off disk: anything on the machine can
+    // write the file and it outlives a reboot, so a bogus level in it is not a
+    // transient. Left alone, one above the top band would sit in the latch over
+    // every real reading — no genuine storm could exceed it and notify — and
+    // the plugin would go quiet while looking like it was working.
+    //
+    // Rejected rather than clamped down to severe, which is the rule every
+    // other guard here follows: anything unusable means "you have told them
+    // nothing", risking one duplicate rather than one silence.
+    var level = Math.round(Number(record.level) || 0)
+    if (!isFinite(level) || level <= 0 || level > 4) return
     if (String(record.location || "") !== latchPlaceKey) return
     if (Date.now() - (Number(record.at) || 0) >= latchMaxAgeMs) return
     if (level > notifiedLevel) notifiedLevel = level
