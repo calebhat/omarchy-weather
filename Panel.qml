@@ -124,7 +124,7 @@ Panel {
     dailyForecastRetryTimer.stop()
     airQualityRetryTimer.stop()
     beginWeatherTransition("location")
-    Qt.callLater(function() { root.refresh(false) })
+    scheduleRefresh(false)
   }
 
   property FileView locationFile: FileView {
@@ -853,6 +853,33 @@ Panel {
   }
 
 
+  // A refresh queued for the end of the turn has to survive the panel being
+  // torn down before it runs.
+  //
+  // That is not a rare window here. Any plugin writing inside its own directory
+  // makes the shell rebuild this one, so a hot reload can begin between the
+  // callLater and the call — and a direct function reference keeps evaluating
+  // into the old, half-destroyed context rather than failing quietly. Seen in
+  // the journal during the reload storm of 2026-09-06:
+  //
+  //   QQmlVMEMetaObject: Internal error - attempted to evaluate a function in
+  //   an invalid context
+  //
+  // Both methods are probed at execution time rather than at queue time,
+  // because it is the moment of the call that has to be safe. A queued refresh
+  // from a panel that is going away becomes a no-op; the panel replacing it
+  // does its own first fetch anyway, so nothing is lost by dropping this one.
+  //
+  // `reason` is forwarded so the guard is invisible to callers: false suppresses
+  // the transition for a caller that already started one, and undefined keeps
+  // the animated default that a bare deferred reference used to get.
+  function scheduleRefresh(reason) {
+    Qt.callLater(function() {
+      if (!root || !root.refresh || !root.refreshDailyForecast) return
+      root.refresh(reason)
+    })
+  }
+
   function refresh(reason) {
     if (reason !== false) beginWeatherTransition(reason === "location" ? "location" : "refresh")
     forecastRetries = 0
@@ -982,7 +1009,7 @@ Panel {
     forecastProc.running = false
     dailyForecastProc.running = false
     airQualityProc.running = false
-    Qt.callLater(function() { root.refresh(false) })
+    scheduleRefresh(false)
   }
 
   function applyPeek(location) {
@@ -1363,7 +1390,7 @@ Panel {
         forecastProc.running = false
         dailyForecastProc.running = false
         airQualityProc.running = false
-        Qt.callLater(root.refresh)
+        root.scheduleRefresh()
       }
     }
   }
