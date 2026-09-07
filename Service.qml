@@ -502,6 +502,11 @@ Item {
   }
 
   function refreshNws() {
+    // The README promises that with storm alerts off — the default —
+    // api.weather.gov is never contacted. Every caller happens to check that
+    // already, but a promise about what the machine talks to should not rest on
+    // every future caller remembering. This is where it is true.
+    if (!alertsEnabled) return
     if (!hasLocation) return
 
     var lat = parseFloat(location.latitude)

@@ -121,8 +121,29 @@ home.
 
 Optional. When on, a background check looks at the forecast around **home**
 (not a peek) and notifies if rain or a storm is expected inside the alert
-radius. Toggle from Settings. Not a life-safety tool — use your national
-weather service for decisions that matter.
+radius. Toggle from Settings.
+
+Inside the United States the forecast is not trusted on its own. Open-Meteo
+answers most places from a global model on a grid tens of kilometres wide, which
+cannot resolve a thunderstorm — it spreads one across a cell and takes it back
+an hour later. So the reading is weighed against your local National Weather
+Service office, which forecasts on a 2.5 km grid and issues the watches and
+warnings by hand:
+
+| Your local office says | What happens to the forecast |
+|---|---|
+| A warning is in force | It outranks the forecast, in both directions — a storm the coarse model missed still alerts, under the warning's own name |
+| Rain is likely (≥50%) | Passes through unchanged |
+| Rain is possible (30–49%) | Capped below the alert threshold — the bar still shows it, nothing interrupts you |
+| Rain is unlikely (<30%) | Dropped |
+
+Anywhere without an NWS office — everywhere outside the US — the forecast is
+used exactly as before. So is anywhere the service cannot be reached, or has not
+answered in the last 45 minutes: a second opinion that is missing can decline to
+help, but it can never silence an alert.
+
+Still not a life-safety tool. It now tells you what your national weather
+service is saying, which is not the same as being one.
 
 ## Install
 
@@ -177,6 +198,7 @@ The built-in weather widget comes back. `weather.json` is left alone.
 | Source | Used for |
 |--------|----------|
 | Open-Meteo | Current, hourly, daily, air quality, city search |
+| api.weather.gov (NWS) | US only, storm alerts only: watches and warnings in force, and the local office's probability of precipitation |
 | wttr.in | IP auto-detect when no home coordinates are stored |
 | RainViewer / NOAA / Windy / WU | Opened in the browser by Open radar (user's saved site) |
 
@@ -204,6 +226,12 @@ reading.
 MIT — [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
 
 No extra packages and no pip. No sudo or pkexec is required. Runtime
-network only: Open-Meteo, wttr.in, and the user-chosen radar website
-(opened in the default browser). Location is written through
-`omarchy-weather-location`.
+network only: Open-Meteo, api.weather.gov (US locations, and only while storm
+alerts are on), wttr.in, and the user-chosen radar website (opened in the
+default browser). Location is written through `omarchy-weather-location`.
+
+With storm alerts off — the default — api.weather.gov is never contacted.
+
+State written: `~/.local/state/omarchy/detailed-weather-alert.json`, holding
+which alert level you were last told about, so a plugin reload does not announce
+the same storm twice. It records a level, a place and a time, and nothing else.

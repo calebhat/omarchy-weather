@@ -20,6 +20,15 @@ NWS_PROCESSES = ("nwsPointsProc", "nwsAlertsProc", "nwsHourlyProc")
 NWS_FINISHERS = ("finishPoints", "finishAlerts", "finishHourly")
 
 
+def code_only(source: str) -> str:
+    """Source with // comments stripped.
+
+    Assertions about what the code does must not be satisfied — or broken — by
+    prose. A comment explaining why a URL is not built here contains the URL.
+    """
+    return "\n".join(re.sub(r"//.*$", "", line) for line in source.splitlines())
+
+
 def body_of(source: str, name: str) -> str:
     match = re.search(rf"function {name}\(.*?\) \{{(?P<body>.*?)\n  \}}", source, re.DOTALL)
     assert match is not None, f"{name} not found"
@@ -134,7 +143,8 @@ class ProcessTests(unittest.TestCase):
         for call in re.findall(r"nws\w*Proc\.command = (\w+(?:\.\w+)*)", SERVICE):
             self.assertEqual(call, "RadarModel.nwsCurlGet")
         self.assertIn("api.weather.gov", RADAR_MODEL)
-        self.assertNotIn("api.weather.gov", SERVICE)
+        self.assertNotIn("api.weather.gov", code_only(SERVICE),
+                         "Service.qml must not build NWS URLs itself")
 
 
 class FailOpenTests(unittest.TestCase):
@@ -184,3 +194,81 @@ class LatchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PromiseTests(unittest.TestCase):
+    """Claims the README makes to the user, checked against the code.
+
+    A README is the only place most people will look to find out what a plugin
+    on their machine talks to. These keep the answer true.
+    """
+
+    def test_the_second_source_is_never_contacted_with_alerts_off(self):
+        # README: "With storm alerts off — the default — api.weather.gov is
+        # never contacted." Enforced where the requests are built, not left to
+        # every caller to remember.
+        body = body_of(SERVICE, "refreshNws")
+        first = body.strip().splitlines()
+        guards = [line for line in first if line.strip().startswith("if (")][:2]
+        self.assertTrue(any("!alertsEnabled" in g for g in guards),
+                        "refreshNws must refuse before it reaches the network")
+
+    def test_alerts_are_off_by_default(self):
+        import json
+        manifest = json.loads((PLUGIN / "manifest.json").read_text(encoding="utf-8"))
+        defaults = manifest["barWidget"]["defaults"]
+        self.assertIs(defaults["alertsEnabled"], False)
+
+    def test_the_documented_thresholds_are_the_ones_in_the_code(self):
+        readme = (PLUGIN / "README.md").read_text(encoding="utf-8")
+        confirm = re.search(r"NWS_POP_CONFIRM = (\d+)", RADAR_MODEL)
+        partial = re.search(r"NWS_POP_PARTIAL = (\d+)", RADAR_MODEL)
+        self.assertIsNotNone(confirm)
+        self.assertIsNotNone(partial)
+        assert confirm is not None and partial is not None
+        # "Rain is likely (>=50%)" / "possible (30-49%)" / "unlikely (<30%)"
+        self.assertIn(f"≥{confirm.group(1)}%", readme)
+        self.assertIn(f"{partial.group(1)}–{int(confirm.group(1)) - 1}%", readme)
+        self.assertIn(f"<{partial.group(1)}%", readme)
+
+    def test_the_documented_staleness_bound_is_the_one_in_the_code(self):
+        readme = (PLUGIN / "README.md").read_text(encoding="utf-8")
+        minutes = re.search(r"NWS_MAX_AGE_MS = (\d+) \* 60 \* 1000", RADAR_MODEL)
+        self.assertIsNotNone(minutes)
+        assert minutes is not None
+        self.assertIn(f"last {minutes.group(1)} minutes", readme)
+
+    # Hosts the plugin can reach, and the name the README documents each under.
+    # The README names services the way a reader would recognise them, so the
+    # mapping is explicit rather than guessed from the hostname.
+    DOCUMENTED_AS = {
+        "api.open-meteo.com": "Open-Meteo",
+        "air-quality-api.open-meteo.com": "Open-Meteo",
+        "geocoding-api.open-meteo.com": "Open-Meteo",
+        "api.weather.gov": "api.weather.gov",
+        "wttr.in": "wttr.in",
+        "www.rainviewer.com": "RainViewer",
+        "radar.weather.gov": "NOAA",
+        "www.windy.com": "Windy",
+        "www.wunderground.com": "Weather Underground",
+        # Not contacted: this appears only inside the User-Agent string the NWS
+        # requires, as the contact address for whoever runs the plugin.
+        "github.com": None,
+    }
+
+    def test_every_host_the_plugin_can_reach_is_documented(self):
+        readme = (PLUGIN / "README.md").read_text(encoding="utf-8")
+        sources = "\n".join((PLUGIN / f).read_text(encoding="utf-8")
+                            for f in ("Service.qml", "Panel.qml", "Model.js", "RadarModel.js"))
+        hosts = set(re.findall(r"https://([a-z0-9.\-]+)", sources))
+
+        undeclared = hosts - set(self.DOCUMENTED_AS)
+        self.assertEqual(undeclared, set(),
+                         "a new host was added without deciding how to document it")
+
+        for host in sorted(hosts):
+            alias = self.DOCUMENTED_AS[host]
+            if alias is None:
+                continue
+            with self.subTest(host=host):
+                self.assertIn(alias, readme, f"{host} is reachable but undocumented")

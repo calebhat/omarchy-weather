@@ -105,7 +105,7 @@
         "type": "boolean",
         "label": "Storm alerts",
         "defaultValue": false,
-        "description": "Notify when rain or a storm is forecast to reach you."
+        "description": "Notify when rain or a storm is forecast to reach you. In the United States the forecast is checked against your local National Weather Service office before it can raise an alert, and a warning in force can raise one on its own. Elsewhere the forecast is used on its own."
       },
       {
         "key": "alertRadiusKm",
@@ -121,7 +121,8 @@
         "type": "enum",
         "label": "Alert threshold",
         "options": ["Light", "Moderate", "Heavy", "Severe"],
-        "defaultValue": "Heavy"
+        "defaultValue": "Heavy",
+        "description": "Minimum forecast rain rate worth a notification. Moderate or heavier arriving into an unstable airmass counts one band up, so a storm crosses the threshold sooner than steady rain of the same rate."
       },
       {
         "key": "radarSite",
