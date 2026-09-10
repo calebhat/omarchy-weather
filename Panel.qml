@@ -260,7 +260,7 @@ Panel {
     // wttr.in's full j1 fetch only serves the no-coordinates (IP auto-detect)
     // path — with configured coordinates Open-Meteo is authoritative, so skip
     // the extra external request entirely.
-    if (!root.peeking && !root.hasHomeCoordinates && !forecastProc.running) forecastProc.running = true
+    if (!root.peeking && !root.hasHomeCoordinates && !forecastProc.running) startForecastProc()
     if (!root.peeking && root.locationQuery === "" && !locationProc.running) locationProc.running = true
     refreshDailyForecast(null)
   }
@@ -579,13 +579,15 @@ Panel {
     Quickshell.execDetached(["omarchy-launch-browser", url])
   }
 
+  function startForecastProc() {
+    var q = String(root.locationQuery || "")
+    if (q.indexOf("://") !== -1 || q.indexOf("/") !== -1) q = ""
+    forecastProc.command = Model.curlGet("https://wttr.in/" + q + "?format=j1", 10, Model.MAX_JSON_BYTES)
+    forecastProc.running = true
+  }
+
   Process {
     id: forecastProc
-    command: {
-      var q = String(root.locationQuery || "")
-      if (q.indexOf("://") !== -1 || q.indexOf("/") !== -1) q = ""
-      return Model.curlGet("https://wttr.in/" + q + "?format=j1", 10, Model.MAX_JSON_BYTES)
-    }
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -628,7 +630,7 @@ Panel {
   Timer {
     id: forecastRetryTimer
     interval: 2500
-    onTriggered: if (!forecastProc.running) forecastProc.running = true
+    onTriggered: if (!forecastProc.running) root.startForecastProc()
   }
 
   // With configured coordinates this fetch is the only thing that updates the
