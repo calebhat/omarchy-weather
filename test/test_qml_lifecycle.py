@@ -76,5 +76,37 @@ class PanelLifecycleTests(unittest.TestCase):
                 self.assertIn(f"{timer}.restart()", source)
 
 
+class BarFacadeWriteTests(unittest.TestCase):
+    """close() must survive the read-only PluginBarApi mirror.
+
+    An installed plugin is handed PluginBarApi, where centerHoverRevealSuppressed
+    is a readonly mirror of the host Bar. Assigning it raises a TypeError, and
+    close() calls the helper on its first line, so the throw aborted close()
+    before controller.hide() -- the panel stayed up and kept the keyboard.
+    """
+
+    HELPER = re.search(
+        r"function setCenterHoverRevealSuppressed\(value\) \{(?P<body>.*?)\n  \}",
+        PANEL,
+        re.DOTALL,
+    )
+
+    def test_the_helper_exists(self):
+        self.assertIsNotNone(self.HELPER)
+
+    def test_the_delegated_setter_is_tried_first(self):
+        body = self.HELPER.group("body")
+        self.assertIn('typeof root.bar.setCenterHoverRevealSuppressed === "function"', body)
+        self.assertLess(
+            body.index("root.bar.setCenterHoverRevealSuppressed(value)"),
+            body.index("root.bar.centerHoverRevealSuppressed = value"),
+            "the delegated setter must be attempted before the direct assignment",
+        )
+
+    def test_a_throw_cannot_abort_close(self):
+        self.assertIn("try {", self.HELPER.group("body"))
+        self.assertIn("catch", self.HELPER.group("body"))
+
+
 if __name__ == "__main__":
     unittest.main()

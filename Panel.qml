@@ -92,9 +92,21 @@ Panel {
     return false
   }
 
+  // A third-party plugin is handed PluginBarApi, not the host Bar: there
+  // centerHoverRevealSuppressed is a READ-ONLY mirror and the only writable
+  // path is the delegated setter. Assigning the property threw a TypeError,
+  // and because close() calls this first, the throw aborted close() before
+  // controller.hide() ran -- the panel stayed open and never gave the
+  // keyboard back. Prefer the setter, and never let this wedge close().
   function setCenterHoverRevealSuppressed(value) {
-    if (root.bar && "centerHoverRevealSuppressed" in root.bar)
-      root.bar.centerHoverRevealSuppressed = value
+    try {
+      if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function")
+        root.bar.setCenterHoverRevealSuppressed(value)
+      else if (root.bar && "centerHoverRevealSuppressed" in root.bar)
+        root.bar.centerHoverRevealSuppressed = value
+    } catch (e) {
+      console.warn("weather: could not set centerHoverRevealSuppressed:", e)
+    }
   }
 
   // Parsed wttr.in j1 response. Kept on failure so stale data stays visible.
