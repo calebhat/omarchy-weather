@@ -88,7 +88,7 @@ BarWidget {
 
   Row {
     id: cluster
-    spacing: root.barTempVisible ? Style.space(2) : 0
+    spacing: root.barTempVisible ? -2 : 0
 
     BarIconButton {
       id: button

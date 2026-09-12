@@ -68,7 +68,9 @@ Panel {
   }
 
   function setCenterHoverRevealSuppressed(value) {
-    if (root.bar && "centerHoverRevealSuppressed" in root.bar)
+    if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function")
+      root.bar.setCenterHoverRevealSuppressed(value)
+    else if (root.bar && "centerHoverRevealSuppressed" in root.bar)
       root.bar.centerHoverRevealSuppressed = value
   }
 
@@ -1392,7 +1394,7 @@ KeyboardPanel {
                         text: root.iconForOpenMeteoCode(modelData.code, modelData.night)
                         color: root.bar.foreground
                         font.family: root.bar.fontFamily
-                        font.pixelSize: Style.font.title
+                        font.pixelSize: Style.font.display
                       }
                       Text {
                         textFormat: Text.PlainText
@@ -1668,7 +1670,7 @@ KeyboardPanel {
                   Layout.fillWidth: true
                   Layout.minimumWidth: 0
                   clip: true
-                  height: root.metricCellHeight + Style.space(8)
+                  height: root.metricCellHeight + Style.space(32)
                   radius: Math.min(4, Style.cornerRadius)
                   color: modelData.isToday ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.1) : Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.05)
 
@@ -1696,7 +1698,7 @@ KeyboardPanel {
                       text: root.iconForOpenMeteoCode(modelData.code, false)
                       color: root.bar.foreground
                       font.family: root.bar.fontFamily
-                      font.pixelSize: Style.font.body
+                      font.pixelSize: Style.font.heading
                     }
 
                     Text {
