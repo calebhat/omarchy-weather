@@ -667,12 +667,14 @@ Panel {
     carouselDetailIndex = 0
     carouselAngle = carouselFocusAngle
     carouselLastInteractionMs = Date.now()
-    carouselReveal = playEntrance ? 0 : 1
-    carouselLift = playEntrance ? 0.86 : 1
-    if (playEntrance) carouselEntrance.restart()
+    var enter = playEntrance && root.forecastOrbit
+    carouselReveal = enter ? 0 : 1
+    carouselLift = enter ? 0.86 : 1
+    if (enter) carouselEntrance.restart()
   }
 
   function beginWeatherTransition(reason) {
+    if (!root.forecastOrbit) return
     if (!root.opened || root.mainView !== "forecast") return
     weatherWipeCover.stop()
     weatherWipeReveal.stop()
@@ -3425,7 +3427,7 @@ KeyboardPanel {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         z: 900
-        active: root.weatherWipeActive && root.mainView === "forecast"
+        active: root.forecastOrbit && root.weatherWipeActive && root.mainView === "forecast"
         progress: root.weatherWipeProgress
         direction: root.weatherWipeDirection
         accentColor: root.weatherWipeAccent

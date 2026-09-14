@@ -109,11 +109,13 @@ class ForecastOrbitTests(unittest.TestCase):
     def test_refresh_and_location_changes_use_the_wave_wipe(self):
         for contract in (
             "function beginWeatherTransition(",
+            "if (!root.forecastOrbit) return",
             "function completeWeatherTransition(",
             "id: weatherWipeCover",
             "id: weatherWipeReveal",
             'beginWeatherTransition("location")',
             "WeatherWaveWipe {",
+            "active: root.forecastOrbit && root.weatherWipeActive && root.mainView === \"forecast\"",
         ):
             self.assertIn(contract, PANEL)
         self.assertIn("ctx.bezierCurveTo(", WAVE_WIPE)
