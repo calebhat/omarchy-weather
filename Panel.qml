@@ -66,8 +66,15 @@ Panel {
     return false
   }
 
+  // Omarchy 4.0.3 hands third-party plugins a PluginBarApi whose
+  // centerHoverRevealSuppressed is read-only and exposes a setter instead.
+  // Assigning to it throws, which aborted close() before controller.hide()
+  // and left the panel stuck open. Prefer the setter; fall back to the
+  // direct write on older shells that still expose the raw Bar.
   function setCenterHoverRevealSuppressed(value) {
-    if (root.bar && "centerHoverRevealSuppressed" in root.bar)
+    if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function")
+      root.bar.setCenterHoverRevealSuppressed(value)
+    else if (root.bar && "centerHoverRevealSuppressed" in root.bar)
       root.bar.centerHoverRevealSuppressed = value
   }
 
@@ -562,7 +569,10 @@ Panel {
     root.mainView = "settings"
   }
 
-  function showForecast() {
+  // Named *View so it does not collide with the `showForecast` boolean
+  // setting property above, which shadowed the function and made Escape
+  // in the settings view throw instead of returning to the forecast.
+  function showForecastView() {
     root.mainView = "forecast"
     if (weatherScroll) weatherScroll.contentY = 0
   }
@@ -828,7 +838,7 @@ KeyboardPanel {
       blocked: root.editingLocation
       onReturnRequested: root.startEditingLocation()
       onCloseRequested: {
-        if (root.mainView === "settings") root.showForecast()
+        if (root.mainView === "settings") root.showForecastView()
         else root.close()
       }
       onTabRequested: function(direction) { root.switchPanel(direction) }
