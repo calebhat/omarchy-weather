@@ -130,9 +130,6 @@ Item {
     var moved = locationKey !== ""
     locationKey = key
 
-    coverageChecked = false
-    hasCoverage = true
-
     if (moved) {
       // Somewhere new has not been reported on yet. Without this the latch
       // carries across the move, and someone who changes city during weather
