@@ -1,7 +1,8 @@
 # Detailed Weather
 
 A single Omarchy bar pill that **replaces** the built-in `omarchy.weather`
-widget. Click it for today's remaining-hour forecast and a ten-day outlook.
+widget. Click it for today's remaining-hour forecast and a ten-day outlook
+(compact strip by default; optional mouse-spinnable orbit).
 **Open radar** launches a saved radar website in your default browser.
 
 Named to sit next to stock Weather, Weathering, and Weather Radar without
@@ -32,11 +33,10 @@ stock weather contract. See [NOTICE.md](NOTICE.md).
 ### Bar pill
 
 Intended to stand in for the built-in weather icon in the centre of the
-bar (disable `omarchy.weather` so you only have one pill). The icon shows
-the current condition glyph for your **saved home** location, even while
-the panel is peeking at another city. Optional **Show temperature** (off
-by default) puts the current reading next to the glyph at the same type
-size as the clock.
+bar (disable `omarchy.weather` so you only have one pill). The pill shows
+the current outside temperature in **°F** with a smaller current-condition
+glyph for your **saved home** location, even while the panel is peeking at
+another city. The bar stays Fahrenheit even when the panel uses metric units.
 
 | Input | Action |
 |-------|--------|
@@ -48,16 +48,38 @@ size as the clock.
 ### Forecast
 
 Current temperature and condition, feels-like, wind, and precipitation
-chance. Below that:
+chance. New readings count smoothly into place; warming flashes amber with a
+rising mark, while cooling flashes ice-blue with a falling mark. Below that:
 
 - **Today** — remaining hours of the current local day (not a fixed six-cell
-  strip). Scroll sideways if the day is long. The first cell is **NOW**.
+  strip). When only a few hours remain, their cards expand evenly across the
+  full row with symmetric edges; scroll sideways when the day is long. The
+  first cell is **NOW**.
 - **Metrics** — wind (speed and direction), humidity, pressure, UV, air
   quality (US AQI, PM2.5 / PM10), sunrise and sunset. Each block can be
   hidden in settings.
-- **Ten-day** — today plus the next nine days, high / low and condition.
+- **Ten-day forecast** — compact strip of today plus the next nine days
+  (default). Settings → **Orbital forecast** swaps that for a mouse-spinnable
+  orbit around a live detail hub. Drag or flick, scroll the wheel, click any
+  day, or use Left/Right (also `h`/`l`). Depth, tilt, opacity, momentum, and a
+  spring snap make the ring feel physical. The center and four detail cells
+  update with condition, high/low, precipitation, UV, sunrise, and sunset.
+  Auto-spin advances after 6.5 seconds idle and pauses under the pointer.
+  Condition-reactive ambient color and a drifting ghost glyph follow the
+  selected day; cards lean into velocity, rain becomes a liquid wave gauge,
+  and thunderstorm days carry an urgent breathing edge. A soft energy core of
+  phase-shifted radial rings breathes behind the selected condition, accelerating
+  visually into the urgent palette for storms. Forecast loading uses an
+  animated organic Canvas glyph rather than a static spinner. Refreshes and
+  city changes sweep the old forecast away behind layered, condition-colored
+  Bézier waves, then reveal the new sky in the direction of the last orbit
+  gesture.
 
-Units follow `auto` (locale and country), `metric`, or `imperial`.
+The orbit entrance and weather wipe run at 1.5× their original speed, keeping
+the visual hit while getting the forecast under your eyes sooner.
+
+Forecast-panel units follow `auto` (locale and country), `metric`, or
+`imperial`; the compact bar temperature is always Fahrenheit.
 
 ### Open radar
 
@@ -100,8 +122,29 @@ home.
 
 Optional. When on, a background check looks at the forecast around **home**
 (not a peek) and notifies if rain or a storm is expected inside the alert
-radius. Toggle from Settings. Not a life-safety tool — use your national
-weather service for decisions that matter.
+radius. Toggle from Settings.
+
+Inside the United States the forecast is not trusted on its own. Open-Meteo
+answers most places from a global model on a grid tens of kilometres wide, which
+cannot resolve a thunderstorm — it spreads one across a cell and takes it back
+an hour later. So the reading is weighed against your local National Weather
+Service office, which forecasts on a 2.5 km grid and issues the watches and
+warnings by hand:
+
+| Your local office says | What happens to the forecast |
+|---|---|
+| A warning is in force | It outranks the forecast, in both directions — a storm the coarse model missed still alerts, under the warning's own name |
+| Rain is likely (≥50%) | Passes through unchanged |
+| Rain is possible (30–49%) | Capped below the alert threshold — the bar still shows it, nothing interrupts you |
+| Rain is unlikely (<30%) | Dropped |
+
+Anywhere without an NWS office — everywhere outside the US — the forecast is
+used exactly as before. So is anywhere the service cannot be reached, or has not
+answered in the last 45 minutes: a second opinion that is missing can decline to
+help, but it can never silence an alert.
+
+Still not a life-safety tool. It now tells you what your national weather
+service is saying, which is not the same as being one.
 
 ## Install
 
@@ -130,12 +173,14 @@ the bar settings form). `shell.json` hot-reloads on save.
 | `unit` | `auto` | `auto` / `metric` / `imperial` |
 | `refreshMinutes` | `15` | Forecast refresh, 5–120 |
 | `showHourly` | `true` | Remaining hours for today |
-| `showForecast` | `true` | Ten-day strip |
+| `showForecast` | `true` | Ten-day outlook |
 | `showMetrics` | `true` | Wind / humidity / pressure / UV grid |
 | `showSun` | `true` | Sunrise / sunset cell |
 | `showAirQuality` | `true` | US AQI cell |
 | `showFeelsLike` | `true` | Feels-like in the header |
 | `showBarTemp` | `false` | Current temperature next to the bar glyph |
+| `forecastOrbit` | `false` | Orbital ten-day forecast instead of the compact strip |
+| `orbitAutoSpin` | `true` | Advance the day orbit after 6.5 seconds idle |
 | `alertsEnabled` | `false` | Storm alerts for home |
 | `alertRadiusKm` | `100` | How far around home to sample |
 | `alertMinIntensity` | `Heavy` | `Light` / `Moderate` / `Heavy` / `Severe` |
@@ -156,6 +201,7 @@ The built-in weather widget comes back. `weather.json` is left alone.
 | Source | Used for |
 |--------|----------|
 | Open-Meteo | Current, hourly, daily, air quality, city search |
+| api.weather.gov (NWS) | US only, storm alerts only: watches and warnings in force, and the local office's probability of precipitation |
 | wttr.in | IP auto-detect when no home coordinates are stored |
 | RainViewer / NOAA / Windy / WU | Opened in the browser by Open radar (user's saved site) |
 
@@ -183,6 +229,12 @@ reading.
 MIT — [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
 
 No extra packages and no pip. No sudo or pkexec is required. Runtime
-network only: Open-Meteo, wttr.in, and the user-chosen radar website
-(opened in the default browser). Location is written through
-`omarchy-weather-location`.
+network only: Open-Meteo, api.weather.gov (US locations, and only while storm
+alerts are on), wttr.in, and the user-chosen radar website (opened in the
+default browser). Location is written through `omarchy-weather-location`.
+
+With storm alerts off — the default — api.weather.gov is never contacted.
+
+State written: `~/.local/state/omarchy/detailed-weather-alert.json`, holding
+which alert level you were last told about, so a plugin reload does not announce
+the same storm twice. It records a level, a place and a time, and nothing else.

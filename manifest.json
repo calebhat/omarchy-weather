@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.calebhat.weather",
   "name": "Detailed Weather",
-  "version": "1.3.0",
+  "version": "1.3.2",
   "author": "calebhat",
   "license": "MIT",
-  "description": "Replaces the Omarchy weather pill with today's remaining-hour forecast, a ten-day outlook, city peek, and Open radar in the default browser.",
+  "description": "Detailed weather with an interactive orbital ten-day forecast, remaining-hour outlook, city peek, and Open radar in the default browser.",
   "homepage": "https://github.com/calebhat/omarchy-weather",
   "kinds": [
     "service",
@@ -17,7 +17,7 @@
   },
   "barWidget": {
     "displayName": "Detailed Weather",
-    "description": "Hourly remaining-day forecast, ten-day outlook, city peek, and Open radar in the browser.",
+    "description": "Hourly forecast, mouse-spinnable ten-day orbit, city peek, and Open radar in the browser.",
     "category": "Info",
     "allowMultiple": false,
     "defaultSection": "center",
@@ -31,6 +31,8 @@
       "showSun": true,
       "showFeelsLike": true,
       "showBarTemp": false,
+      "forecastOrbit": false,
+      "orbitAutoSpin": true,
       "alertsEnabled": false,
       "alertRadiusKm": 100,
       "alertMinIntensity": "Heavy",
@@ -101,11 +103,25 @@
         "description": "Current temperature next to the condition glyph, using the same type size as the clock."
       },
       {
+        "key": "forecastOrbit",
+        "type": "boolean",
+        "label": "Orbital ten-day forecast",
+        "defaultValue": false,
+        "description": "Replace the compact ten-day strip with a mouse-spinnable orbit. Off keeps the original layout."
+      },
+      {
+        "key": "orbitAutoSpin",
+        "type": "boolean",
+        "label": "Auto-spin forecast orbit",
+        "defaultValue": true,
+        "description": "Advance the orbital day carousel after 6.5 seconds without interaction. Pauses while the pointer is over it. Only applies when the orbital forecast is on."
+      },
+      {
         "key": "alertsEnabled",
         "type": "boolean",
         "label": "Storm alerts",
         "defaultValue": false,
-        "description": "Notify when rain or a storm is forecast to reach you."
+        "description": "Notify when rain or a storm is forecast to reach you. In the United States the forecast is checked against your local National Weather Service office before it can raise an alert, and a warning in force can raise one on its own. Elsewhere the forecast is used on its own."
       },
       {
         "key": "alertRadiusKm",
@@ -121,7 +137,8 @@
         "type": "enum",
         "label": "Alert threshold",
         "options": ["Light", "Moderate", "Heavy", "Severe"],
-        "defaultValue": "Heavy"
+        "defaultValue": "Heavy",
+        "description": "Minimum forecast rain rate worth a notification. Moderate or heavier arriving into an unstable airmass counts one band up, so a storm crosses the threshold sooner than steady rain of the same rate."
       },
       {
         "key": "radarSite",

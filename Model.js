@@ -241,6 +241,11 @@ function openMeteoCurrentCondition(dailyForecastReport) {
     windspeedKmph: roundedTemp(current.wind_speed_10m),
     windspeedMiles: roundedTemp(current.wind_speed_10m * 0.621371),
     windDirection: current.wind_direction_10m,
+    // Observed sky state. The forecast orbit's cloud deck renders these
+    // directly, so a clear afternoon looks clear and a 30 mph south wind
+    // actually pushes the banks north across the stage.
+    cloudCover: current.cloud_cover,
+    precipitation: current.precipitation,
     humidity: roundedTemp(current.relative_humidity_2m),
     pressureMb: roundedTemp(current.surface_pressure),
     openMeteoWeatherCode: current.weather_code,
