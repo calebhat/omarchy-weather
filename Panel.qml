@@ -13,6 +13,19 @@ Panel {
   ipcTarget: "io.github.calebhat.weather"
   manageIpc: false
 
+  // A plugin rescan destroys the old bar before every loaded panel is
+  // collected. Keep late bindings pointed at a valid palette object during
+  // that teardown window instead of producing an unbounded null-error loop.
+  QtObject {
+    id: fallbackBar
+    property color foreground: Color.foreground
+    property color barForeground: Color.foreground
+    property color urgent: Color.urgent
+    property string fontFamily: Style.font.family
+  }
+
+  onBarChanged: if (!bar) bar = fallbackBar
+
   property var anchorItem: null
   property bool openedFromHotkey: false
 
@@ -35,6 +48,7 @@ Panel {
     openedFromHotkey = false
     setCenterHoverRevealSuppressed(false)
     root.controller.show()
+    resetCarousel(true)
     locationFile.reload()
     root.refresh()
   }
@@ -42,6 +56,7 @@ Panel {
   function openFromHotkey() {
     openedFromHotkey = true
     root.controller.show()
+    resetCarousel(true)
     locationFile.reload()
     root.refresh()
     Qt.callLater(function() {
@@ -51,6 +66,17 @@ Panel {
 
   function close() {
     setCenterHoverRevealSuppressed(false)
+    carouselEntrance.stop()
+    carouselSnap.stop()
+    carouselLeanReset.stop()
+    weatherWipeCover.stop()
+    weatherWipeReveal.stop()
+    weatherWipeFallback.stop()
+    carouselDragging = false
+    carouselSettling = false
+    carouselLean = 0
+    weatherWipeActive = false
+    weatherWipeProgress = 0
     if (root.editingLocation) root.cancelEditingLocation()
     root.mainView = "forecast"
     root.controller.hide()
@@ -67,16 +93,22 @@ Panel {
     return false
   }
 
-  // Omarchy 4.0.3 hands third-party plugins a PluginBarApi whose
-  // centerHoverRevealSuppressed is read-only and exposes a setter instead.
-  // Assigning to it throws, which aborted close() before controller.hide()
-  // and left the panel stuck open. Prefer the setter; fall back to the
-  // direct write on older shells that still expose the raw Bar.
+
+  // A third-party plugin is handed PluginBarApi, not the host Bar: there
+  // centerHoverRevealSuppressed is a READ-ONLY mirror and the only writable
+  // path is the delegated setter. Assigning the property threw a TypeError,
+  // and because close() calls this first, the throw aborted close() before
+  // controller.hide() ran -- the panel stayed open and never gave the
+  // keyboard back. Prefer the setter, and never let this wedge close().
   function setCenterHoverRevealSuppressed(value) {
-    if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function")
-      root.bar.setCenterHoverRevealSuppressed(value)
-    else if (root.bar && "centerHoverRevealSuppressed" in root.bar)
-      root.bar.centerHoverRevealSuppressed = value
+    try {
+      if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function")
+        root.bar.setCenterHoverRevealSuppressed(value)
+      else if (root.bar && "centerHoverRevealSuppressed" in root.bar)
+        root.bar.centerHoverRevealSuppressed = value
+    } catch (e) {
+      console.warn("weather: could not set centerHoverRevealSuppressed:", e)
+    }
   }
 
   // Parsed wttr.in j1 response. Kept on failure so stale data stays visible.
@@ -105,7 +137,8 @@ Panel {
     forecastRetryTimer.stop()
     dailyForecastRetryTimer.stop()
     airQualityRetryTimer.stop()
-    Qt.callLater(refresh)
+    beginWeatherTransition("location")
+    scheduleRefresh(false)
   }
 
   property FileView locationFile: FileView {
@@ -163,6 +196,28 @@ Panel {
   property string label: ""
   property string homeLabel: ""
   readonly property string barLabel: homeLabel || label
+  property string homeTempF: ""
+  readonly property string barTemperatureF: homeTempF
+  readonly property string barConditionGlyph: homeLabel || label
+
+  // The forecast panel can follow the user's unit preference, but the compact
+  // outside-temperature readout in the bar is intentionally always Fahrenheit.
+  // Keep its value paired with the saved home's icon so peeking at another city
+  // cannot quietly replace either half of the bar reading.
+  function rememberHomeCurrent(currentCondition, provisionalIcon) {
+    if (root.peeking || !currentCondition) return
+
+    var nextIcon = provisionalIcon
+      ? Model.provisionalCurrentIcon(currentCondition, root.homeLabel || root.label)
+      : Model.currentIcon(currentCondition, root.homeLabel || root.label)
+    if (nextIcon !== "") {
+      root.label = nextIcon
+      root.homeLabel = nextIcon
+    }
+
+    var nextTempF = Model.roundedTemp(currentCondition.temp_F)
+    if (nextTempF !== "") root.homeTempF = nextTempF
+  }
 
   // wttr's current conditions when available; open-meteo's (bundled with the
   // much faster daily forecast fetch) fill the hero while wttr is in flight.
@@ -185,10 +240,26 @@ Panel {
   readonly property bool showSun: setting("showSun", true) !== false
   readonly property bool showForecast: setting("showForecast", true) !== false
   readonly property bool showFeelsLike: setting("showFeelsLike", true) !== false
+  readonly property bool orbitAutoSpin: setting("orbitAutoSpin", true) !== false
 
   readonly property string reportLocation: peeking ? peekName : (configuredLocation || wttrLocation || (areaInfo && areaInfo.areaName && areaInfo.areaName[0] ? areaInfo.areaName[0].value : ""))
   readonly property string reportTempNum: current ? String(useImperial ? current.temp_F : current.temp_C) : ""
   readonly property string tempUnit: "°" + (useImperial ? "F" : "C")
+  property real animatedReportTemp: NaN
+  property string animatedTempUnit: ""
+  property real temperatureFlash: 0
+  property int temperatureDirection: 0
+  readonly property string displayedTempNum: isFinite(animatedReportTemp)
+    ? String(Math.round(animatedReportTemp))
+    : (reportTempNum || "—")
+  readonly property color temperatureMotionColor: {
+    var base = root.bar ? root.bar.foreground : Color.foreground
+    if (temperatureDirection > 0)
+      return Qt.tint(base, Qt.rgba(1.0, 0.30, 0.08, temperatureFlash * 0.72))
+    if (temperatureDirection < 0)
+      return Qt.tint(base, Qt.rgba(0.12, 0.64, 1.0, temperatureFlash * 0.72))
+    return base
+  }
   readonly property string reportFeels: current ? formatTemp(useImperial ? current.FeelsLikeF : current.FeelsLikeC) : ""
   readonly property string reportWindDir: openMeteoCurrent ? Model.windDirectionLabel(openMeteoCurrent.windDirection) : ""
   readonly property string reportWind: current ? ((useImperial ? (current.windspeedMiles + " mph") : (current.windspeedKmph + " km/h")) + (reportWindDir ? " " + reportWindDir : "")) : ""
@@ -215,6 +286,50 @@ Panel {
     return Model.minutelyPrecipForecast(dailyForecastReport, 7200)
   }
   readonly property var daily: Model.dailyForecast(dailyForecastReport, Qt.formatDate(new Date(), "yyyy-MM-dd"), 10)
+  // The ten-day forecast is presented as a circular, directly manipulated
+  // orbit. `carouselAngle` is deliberately unbounded: keeping full turns
+  // avoids a visible jump when the selected day wraps from day ten to today.
+  property real carouselAngle: 90
+  property int carouselSelectedIndex: 0
+  property int carouselDetailIndex: 0
+  property bool carouselDragging: false
+  property bool carouselSettling: false
+  property bool carouselPointerInside: false
+  property int carouselHoverIndex: -1
+  property real carouselPressX: 0
+  property real carouselLastX: 0
+  property real carouselLastMs: 0
+  property real carouselVelocity: 0
+  property real carouselDragDistance: 0
+  property real carouselReveal: 1
+  property real carouselLift: 1
+  property real carouselDetailReveal: 1
+  property real carouselLastInteractionMs: Date.now()
+  property real carouselLean: 0
+  property real weatherAmbientPhase: 0
+  property real weatherWavePhase: 0
+  property real weatherCorePhase: 0
+  // A two-stage transition: 0→1 covers the old forecast, 1→2 reveals the
+  // refreshed one. Direction remembers the user's last orbit gesture, so a
+  // refresh feels connected to the same physical surface.
+  property real weatherWipeProgress: 0
+  property real weatherWipeDirection: 1
+  property bool weatherWipeActive: false
+  property bool weatherWipeCovered: false
+  property bool weatherWipeDataReady: false
+  property color weatherWipeAccent: weatherAccent
+  property string weatherWipeLabel: "REFRESHING FORECAST"
+  readonly property real carouselFocusAngle: 90
+  readonly property int carouselCount: daily.length
+  readonly property real carouselStep: carouselCount > 0 ? 360 / carouselCount : 36
+  readonly property var carouselDay: carouselCount > 0
+    ? daily[Math.max(0, Math.min(carouselDetailIndex, carouselCount - 1))]
+    : null
+  readonly property var carouselUv: carouselDay && carouselDay.uv !== null && isFinite(carouselDay.uv)
+    ? Model.uvInfo(carouselDay.uv)
+    : null
+  readonly property bool carouselStorm: carouselDay ? isStormCode(carouselDay.code) : false
+  property color weatherAccent: weatherAccentForCode(carouselDay ? carouselDay.code : -1)
   readonly property var airQuality: Model.aqiSummary(airQualityReport)
   readonly property bool hasAirQuality: airQuality !== null
   // Safe alias: bindings evaluate even when the AQI section is hidden, so the
@@ -255,8 +370,546 @@ Panel {
   readonly property real uvLevel: todayExtra && todayExtra.uv !== null && isFinite(todayExtra.uv) ? Math.max(0, Math.min(1, todayExtra.uv / 12)) : -1
   readonly property string hourlyMax: Model.hourlyMaxTemp(hourly, useImperial)
 
+  function positiveModulo(value, modulus) {
+    if (modulus < 1) return 0
+    return ((value % modulus) + modulus) % modulus
+  }
 
-  function refresh() {
+  function isStormCode(code) {
+    var value = Number(code)
+    return isFinite(value) && value >= 95
+  }
+
+  function isSnowCode(code) {
+    var v = Number(code)
+    if (!isFinite(v)) return false
+    return (v >= 71 && v <= 77) || v === 85 || v === 86
+  }
+
+  // Fallback precipitation intensity, 0..1, for a day we have no observation
+  // for. Used for every orbit position except today.
+  function precipForCode(code) {
+    var v = Number(code)
+    if (!isFinite(v)) return 0
+    if (v >= 95) return 0.90                 // thunderstorm
+    if (v >= 85) return 0.70                 // snow showers
+    if (v >= 80) return 0.72                 // rain showers
+    if (v >= 71) return 0.55                 // snow
+    if (v >= 61) return 0.60                 // rain
+    if (v >= 51) return 0.30                 // drizzle
+    return 0
+  }
+
+  // ---- LIVE SKY. When the orbit is parked on today, the cloud deck stops
+  //      guessing from the weather code and renders the actual observation:
+  //      measured cloud cover, real wind speed and bearing, real precipitation
+  //      rate, and whether the sun is up. Any other day falls back to what the
+  //      forecast code implies, because Open-Meteo's daily block carries no
+  //      cloud-cover or wind series.
+  // ---- SKY PREVIEW. Atlanta is not going to snow on demand, and a state you
+  //      cannot see is a state you cannot claim works. Forcing a condition
+  //      through IPC makes every branch reachable:
+  //        qs ipc call io.github.calebhat.weather sky rain
+  //      Modes: clear, night, cloudy, rain, snow, storm, off (back to live).
+  property string skyPreview: ""
+
+  readonly property bool skyPreviewOn: root.skyPreview !== ""
+
+  function skyPreviewValue(key) {
+    var m = root.skyPreview
+    var table = {
+      "clear":  { density: 0.04, precip: 0,    storm: false, snow: false, night: false, wind: 5,  sun: 0.38 },
+      "night":  { density: 0.04, precip: 0,    storm: false, snow: false, night: true,  wind: 4,  sun: -1 },
+      "cloudy": { density: 0.88, precip: 0,    storm: false, snow: false, night: false, wind: 11, sun: 0.38 },
+      "rain":   { density: 0.96, precip: 0.75, storm: false, snow: false, night: false, wind: 15, sun: -1 },
+      "snow":   { density: 0.90, precip: 0.70, storm: false, snow: true,  night: false, wind: 8,  sun: -1 },
+      "storm":  { density: 1.00, precip: 0.95, storm: true,  snow: false, night: false, wind: 28, sun: -1 }
+    }
+    var row = table[m]
+    return row ? row[key] : null
+  }
+
+  readonly property bool skyIsLive: root.carouselDay !== null && root.carouselDay !== undefined
+    && root.carouselDay.isToday === true && root.openMeteoCurrent !== null
+
+  readonly property real skyCloudCover: {
+    if (skyPreviewOn) return skyPreviewValue("density")
+    if (skyIsLive && isFinite(Number(root.openMeteoCurrent.cloudCover)))
+      return Math.max(0, Math.min(1, Number(root.openMeteoCurrent.cloudCover) / 100))
+    return root.carouselDay ? root.cloudinessForCode(root.carouselDay.code) : 0.55
+  }
+
+  readonly property real skyPrecip: {
+    if (skyPreviewOn) return skyPreviewValue("precip")
+    if (skyIsLive && isFinite(Number(root.openMeteoCurrent.precipitation))) {
+      // mm/h. 2.5 mm/h is already properly raining, so that saturates.
+      var mm = Number(root.openMeteoCurrent.precipitation)
+      if (mm > 0) return Math.max(0.12, Math.min(1, mm / 2.5))
+      // Measured zero means zero. The daily code can say SHOWERS while the
+      // sky outside the window is dry, and the deck answers to the window.
+      return 0
+    }
+    return root.carouselDay ? root.precipForCode(root.carouselDay.code) : 0
+  }
+
+  readonly property bool skyStorm: skyPreviewOn ? skyPreviewValue("storm") : root.carouselStorm
+  readonly property bool skySnow: skyPreviewOn
+    ? skyPreviewValue("snow")
+    : (root.carouselDay ? root.isSnowCode(root.carouselDay.code) : false)
+
+  // Where the sun is on its arc for the day on show: 0 at sunrise, 1 at
+  // sunset, -1 once it is down. Uses the day's own sunrise/sunset, so a
+  // morning panel puts the sun low on the left and noon puts it overhead.
+  readonly property real skySunProgress: {
+    if (skyPreviewOn) return skyPreviewValue("sun")
+    if (skyIsNight) return -1
+    if (!root.carouselDay || !root.carouselDay.sunrise || !root.carouselDay.sunset) return 0.5
+    var rise = new Date(root.carouselDay.sunrise).getTime()
+    var set = new Date(root.carouselDay.sunset).getTime()
+    if (!isFinite(rise) || !isFinite(set) || set <= rise) return 0.5
+    // Any day but today has no "now" to speak of, so show it at mid-morning
+    // rather than pinning an unrelated clock onto it.
+    if (!root.carouselDay.isToday) return 0.42
+    var p = (Date.now() - rise) / (set - rise)
+    return (p < 0 || p > 1) ? -1 : p
+  }
+
+  readonly property real skyWindSpeed: skyPreviewOn
+    ? skyPreviewValue("wind")
+    : (skyIsLive && isFinite(Number(root.openMeteoCurrent.windspeedMiles))
+      ? Number(root.openMeteoCurrent.windspeedMiles)
+      : 6)
+
+  readonly property real skyWindFromDeg: skyIsLive ? root.windDeg : -1
+
+  readonly property bool skyIsNight: skyPreviewOn
+    ? skyPreviewValue("night")
+    : root.openMeteoCurrent
+    && root.openMeteoCurrent.isDay !== undefined
+    && Number(root.openMeteoCurrent.isDay) === 0
+
+  // How thick the drifting cloud deck behind the orbit should be for a given
+  // WMO code. Clear days keep a couple of wisps so the layer never pops in or
+  // out; anything precipitating fills the stage.
+  function cloudinessForCode(code) {
+    var value = Number(code)
+    if (!isFinite(value)) return 0.55
+    if (value >= 95) return 1.0          // thunderstorm
+    if (value >= 80) return 0.98         // showers
+    if (value >= 71) return 0.90         // snow
+    if (value >= 51) return 0.94         // drizzle and rain
+    if (value >= 45) return 0.88         // fog
+    if (value >= 3) return 0.92          // overcast
+    if (value >= 2) return 0.66          // partly cloudy
+    if (value >= 1) return 0.40          // mainly clear
+    return 0.20                          // clear
+  }
+
+  function syncAnimatedTemperature() {
+    if (root.reportTempNum === "") return
+    var next = Number(root.reportTempNum)
+    if (!isFinite(next)) return
+
+    // Unit conversions are not weather changes; snap those without a false
+    // warm/cool signal. The first reading also appears immediately.
+    if (!isFinite(root.animatedReportTemp) || root.animatedTempUnit !== root.tempUnit) {
+      temperatureTween.stop()
+      temperatureFlashPulse.stop()
+      root.animatedReportTemp = next
+      root.animatedTempUnit = root.tempUnit
+      root.temperatureDirection = 0
+      root.temperatureFlash = 0
+      return
+    }
+
+    var delta = next - root.animatedReportTemp
+    if (Math.abs(delta) < 0.01) return
+    root.temperatureDirection = delta > 0 ? 1 : -1
+    temperatureTween.stop()
+    temperatureFlashPulse.stop()
+    temperatureTween.from = root.animatedReportTemp
+    temperatureTween.to = next
+    temperatureTween.duration = Math.min(980, 420 + Math.abs(delta) * 34)
+    root.temperatureFlash = 0
+    temperatureTween.start()
+    temperatureFlashPulse.start()
+  }
+
+  onReportTempNumChanged: syncAnimatedTemperature()
+
+  // Deferred so the unit flip and the number that follows it settle into one
+  // animation, and coalesced so a flip back and forth does not queue two.
+  // A Timer rather than Qt.callLater because it is a child of this panel and
+  // dies with it — see scheduleRefresh for the teardown this plugin actually
+  // sees. restart() collapses repeats exactly as callLater's identity
+  // coalescing did.
+  Timer {
+    id: tempUnitTimer
+    interval: 0
+    repeat: false
+    onTriggered: root.syncAnimatedTemperature()
+  }
+
+  onTempUnitChanged: tempUnitTimer.restart()
+
+  // Keep the shell theme as the base, then tint it toward a recognizable
+  // condition family. These colors only appear at low opacity, so the panel
+  // stays at home in custom themes instead of becoming a fixed blue weather UI.
+  function weatherAccentForCode(code) {
+    var value = Number(code)
+    if (!isFinite(value) || value < 0) return Color.accent
+    if (value >= 95) return Qt.tint(Color.urgent, Qt.rgba(0.58, 0.25, 0.90, 0.28))
+    if ((value >= 71 && value <= 86) || value === 66 || value === 67)
+      return Qt.tint(Color.accent, Qt.rgba(0.72, 0.90, 1.0, 0.68))
+    if ((value >= 51 && value <= 67) || (value >= 80 && value <= 82))
+      return Qt.tint(Color.accent, Qt.rgba(0.22, 0.58, 0.96, 0.62))
+    if (value === 45 || value === 48)
+      return Qt.tint(Color.muted, Qt.rgba(0.72, 0.76, 0.82, 0.42))
+    if (value === 0)
+      return Qt.tint(Color.accent, Qt.rgba(1.0, 0.72, 0.22, 0.58))
+    if (value <= 3)
+      return Qt.tint(Color.accent, Qt.rgba(0.54, 0.72, 0.92, 0.30))
+    return Color.accent
+  }
+
+  Behavior on weatherAccent {
+    ColorAnimation { duration: 720; easing.type: Easing.OutCubic }
+  }
+
+  NumberAnimation {
+    id: temperatureTween
+    target: root
+    property: "animatedReportTemp"
+    easing.type: Easing.OutCubic
+  }
+
+  SequentialAnimation {
+    id: temperatureFlashPulse
+    NumberAnimation {
+      target: root
+      property: "temperatureFlash"
+      from: 0
+      to: 1
+      duration: 130
+      easing.type: Easing.OutCubic
+    }
+    NumberAnimation {
+      target: root
+      property: "temperatureFlash"
+      to: 0
+      duration: 780
+      easing.type: Easing.OutQuint
+    }
+  }
+
+  function selectedIndexForAngle(angle) {
+    if (carouselCount < 1) return 0
+    return positiveModulo(Math.round((carouselFocusAngle - angle) / carouselStep), carouselCount)
+  }
+
+  function syncCarouselSelection() {
+    if (carouselCount < 1) return
+    var nextIndex = selectedIndexForAngle(carouselAngle)
+    if (nextIndex === carouselSelectedIndex) return
+    carouselSelectedIndex = nextIndex
+    carouselDetailIndex = nextIndex
+    carouselDetailReveal = 0.58
+    carouselDetailPulse.restart()
+  }
+
+  function nearestCarouselTurn(index) {
+    if (carouselCount < 1) return 0
+    var normalizedIndex = positiveModulo(index, carouselCount)
+    var currentTurn = (carouselFocusAngle - carouselAngle) / carouselStep
+    return normalizedIndex + Math.round((currentTurn - normalizedIndex) / carouselCount) * carouselCount
+  }
+
+  function settleCarousel(rawTurn) {
+    if (carouselCount < 1) return
+    var turn = Math.round(rawTurn)
+    carouselSelectedIndex = positiveModulo(turn, carouselCount)
+    carouselDetailIndex = carouselSelectedIndex
+    carouselSettling = true
+    carouselSnap.stop()
+    carouselSnap.from = carouselAngle
+    carouselSnap.to = carouselFocusAngle - turn * carouselStep
+    carouselSnap.start()
+  }
+
+  function focusCarouselDay(index) {
+    if (carouselCount < 1) return
+    settleCarousel(nearestCarouselTurn(index))
+  }
+
+  function stepCarousel(direction) {
+    if (carouselCount < 2 || carouselDragging) return
+    carouselLastInteractionMs = Date.now()
+    weatherWipeDirection = direction >= 0 ? 1 : -1
+    carouselLeanReset.stop()
+    carouselLean = Math.max(-9, Math.min(9, -direction * 7))
+    carouselLeanReset.restart()
+    var currentTurn = Math.round((carouselFocusAngle - carouselAngle) / carouselStep)
+    settleCarousel(currentTurn + direction)
+  }
+
+  function resetCarousel(playEntrance) {
+    carouselSnap.stop()
+    carouselLeanReset.stop()
+    carouselDragging = false
+    carouselSettling = false
+    carouselVelocity = 0
+    carouselLean = 0
+    carouselHoverIndex = -1
+    carouselSelectedIndex = 0
+    carouselDetailIndex = 0
+    carouselAngle = carouselFocusAngle
+    carouselLastInteractionMs = Date.now()
+    carouselReveal = playEntrance ? 0 : 1
+    carouselLift = playEntrance ? 0.86 : 1
+    if (playEntrance) carouselEntrance.restart()
+  }
+
+  function beginWeatherTransition(reason) {
+    if (!root.opened || root.mainView !== "forecast") return
+    weatherWipeCover.stop()
+    weatherWipeReveal.stop()
+    weatherWipeFallback.stop()
+    weatherWipeAccent = root.weatherAccent
+    weatherWipeLabel = reason === "location" ? "CHANGING SKIES" : "REFRESHING FORECAST"
+    weatherWipeProgress = 0
+    weatherWipeCovered = false
+    weatherWipeDataReady = false
+    weatherWipeActive = true
+    weatherWipeCover.start()
+    weatherWipeFallback.restart()
+  }
+
+  function completeWeatherTransition() {
+    if (!weatherWipeActive) return
+    weatherWipeFallback.stop()
+    weatherWipeDataReady = true
+    weatherWipeAccent = weatherAccentForCode(carouselDay ? carouselDay.code : -1)
+    if (weatherWipeCovered) weatherWipeReveal.restart()
+  }
+
+  function revealWeatherTransition() {
+    if (!weatherWipeActive || !weatherWipeCovered) return
+    weatherWipeDataReady = true
+    weatherWipeReveal.restart()
+  }
+
+  function carouselCardAt(pointX, pointY) {
+    var bestIndex = -1
+    var bestZ = -999999
+    for (var i = 0; i < carouselRepeater.count; i++) {
+      var card = carouselRepeater.itemAt(i)
+      if (!card || !card.visible) continue
+      var local = card.mapFromItem(carouselStage, pointX, pointY)
+      if (local.x >= 0 && local.x <= card.width && local.y >= 0 && local.y <= card.height && card.z >= bestZ) {
+        bestIndex = i
+        bestZ = card.z
+      }
+    }
+    return bestIndex
+  }
+
+  function updateCarouselHover(pointX, pointY) {
+    carouselHoverIndex = carouselCardAt(pointX, pointY)
+  }
+
+  onCarouselAngleChanged: syncCarouselSelection()
+  onDailyChanged: {
+    if (carouselCount < 1) return
+    carouselSelectedIndex = Math.max(0, Math.min(carouselSelectedIndex, carouselCount - 1))
+    carouselDetailIndex = carouselSelectedIndex
+    focusCarouselDay(carouselSelectedIndex)
+  }
+
+  NumberAnimation {
+    id: carouselSnap
+    target: root
+    property: "carouselAngle"
+    duration: 620
+    easing.type: Easing.OutBack
+    easing.overshoot: 1.12
+    onFinished: root.carouselSettling = false
+  }
+
+  NumberAnimation {
+    id: carouselDetailPulse
+    target: root
+    property: "carouselDetailReveal"
+    to: 1
+    duration: 240
+    easing.type: Easing.OutCubic
+  }
+
+  NumberAnimation {
+    id: carouselLeanReset
+    target: root
+    property: "carouselLean"
+    to: 0
+    duration: 520
+    easing.type: Easing.OutBack
+    easing.overshoot: 1.08
+  }
+
+  NumberAnimation on weatherAmbientPhase {
+    from: 0
+    to: Math.PI * 2
+    duration: 24000
+    loops: Animation.Infinite
+    running: root.opened && root.mainView === "forecast"
+  }
+
+  NumberAnimation on weatherWavePhase {
+    from: 0
+    to: Math.PI * 2
+    duration: 2600
+    loops: Animation.Infinite
+    running: root.opened && root.mainView === "forecast"
+  }
+
+  NumberAnimation on weatherCorePhase {
+    from: 0
+    to: Math.PI * 2
+    duration: 5800
+    loops: Animation.Infinite
+    running: root.opened && root.mainView === "forecast"
+  }
+
+  NumberAnimation {
+    id: weatherWipeCover
+    target: root
+    property: "weatherWipeProgress"
+    from: 0
+    to: 1
+    duration: 307
+    easing.type: Easing.InOutCubic
+    onFinished: {
+      root.weatherWipeCovered = true
+      if (root.weatherWipeDataReady) weatherWipeReveal.restart()
+    }
+  }
+
+  SequentialAnimation {
+    id: weatherWipeReveal
+    PauseAnimation { duration: 67 }
+    NumberAnimation {
+      target: root
+      property: "weatherWipeProgress"
+      from: 1
+      to: 2
+      duration: 453
+      easing.type: Easing.OutQuint
+    }
+    ScriptAction {
+      script: {
+        root.weatherWipeActive = false
+        root.weatherWipeCovered = false
+        root.weatherWipeDataReady = false
+        root.weatherWipeProgress = 0
+      }
+    }
+  }
+
+  // A slow provider must never leave the panel hidden. If fresh data has not
+  // arrived, reveal the loading state and let the normal retry UI take over.
+  Timer {
+    id: weatherWipeFallback
+    interval: 1200
+    onTriggered: root.revealWeatherTransition()
+  }
+
+  SequentialAnimation {
+    id: carouselEntrance
+    ScriptAction {
+      script: {
+        if (root.carouselCount > 1)
+          root.carouselAngle = root.carouselFocusAngle + root.carouselStep * 2.25
+      }
+    }
+    ParallelAnimation {
+      NumberAnimation {
+        target: root
+        property: "carouselAngle"
+        to: root.carouselFocusAngle
+        duration: 700
+        easing.type: Easing.OutBack
+        easing.overshoot: 1.08
+      }
+      NumberAnimation {
+        target: root
+        property: "carouselReveal"
+        to: 1
+        duration: 347
+        easing.type: Easing.OutCubic
+      }
+      NumberAnimation {
+        target: root
+        property: "carouselLift"
+        to: 1
+        duration: 600
+        easing.type: Easing.OutBack
+        easing.overshoot: 1.1
+      }
+    }
+    ScriptAction {
+      script: {
+        root.carouselSelectedIndex = 0
+        root.carouselDetailIndex = 0
+        root.carouselAngle = root.carouselFocusAngle
+      }
+    }
+  }
+
+  Timer {
+    id: carouselIdle
+    interval: 1000
+    repeat: true
+    running: root.opened
+      && root.mainView === "forecast"
+      && root.carouselCount > 1
+      && root.orbitAutoSpin
+    onTriggered: {
+      if (!root.carouselDragging
+          && !root.carouselSettling
+          && !root.carouselPointerInside
+          && Date.now() - root.carouselLastInteractionMs >= 6500)
+        root.stepCarousel(1)
+    }
+  }
+
+
+  // A refresh queued for the end of the turn has to survive the panel being
+  // torn down before it runs.
+  //
+  // That is not a rare window here. Any plugin writing inside its own directory
+  // makes the shell rebuild this one, so a hot reload can begin between the
+  // callLater and the call — and a direct function reference keeps evaluating
+  // into the old, half-destroyed context rather than failing quietly. Seen in
+  // the journal during the reload storm of 2026-09-06:
+  //
+  //   QQmlVMEMetaObject: Internal error - attempted to evaluate a function in
+  //   an invalid context
+  //
+  // Both methods are probed at execution time rather than at queue time,
+  // because it is the moment of the call that has to be safe. A queued refresh
+  // from a panel that is going away becomes a no-op; the panel replacing it
+  // does its own first fetch anyway, so nothing is lost by dropping this one.
+  //
+  // `reason` is forwarded so the guard is invisible to callers: false suppresses
+  // the transition for a caller that already started one, and undefined keeps
+  // the animated default that a bare deferred reference used to get.
+  function scheduleRefresh(reason) {
+    Qt.callLater(function() {
+      if (!root || !root.refresh || !root.refreshDailyForecast) return
+      root.refresh(reason)
+    })
+  }
+
+  function refresh(reason) {
+    if (reason !== false) beginWeatherTransition(reason === "location" ? "location" : "refresh")
     forecastRetries = 0
     dailyForecastRetries = 0
     airQualityRetries = 0
@@ -299,7 +952,7 @@ Panel {
     var url = "https://api.open-meteo.com/v1/forecast"
       + "?latitude=" + encodeURIComponent(String(lat))
       + "&longitude=" + encodeURIComponent(String(lon))
-      + "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_direction_10m,surface_pressure,weather_code,is_day"
+      + "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_direction_10m,surface_pressure,weather_code,is_day,cloud_cover,precipitation"
       + "&hourly=temperature_2m,precipitation_probability,weather_code,is_day"
       + "&minutely_15=precipitation,precipitation_probability"
       + "&forecast_minutely_15=16"
@@ -373,7 +1026,8 @@ Panel {
     Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus() })
   }
 
-  function refetchView() {
+  function refetchView(playTransition) {
+    if (playTransition) beginWeatherTransition("location")
     forecastRetries = 0
     dailyForecastRetries = 0
     airQualityRetries = 0
@@ -383,7 +1037,7 @@ Panel {
     forecastProc.running = false
     dailyForecastProc.running = false
     airQualityProc.running = false
-    Qt.callLater(refresh)
+    scheduleRefresh(false)
   }
 
   function applyPeek(location) {
@@ -401,21 +1055,23 @@ Panel {
       locationPickHint = "Pick a city from the list"
       return
     }
+    beginWeatherTransition("location")
     peekLocation = { name: String(location.name || ""), latitude: lat, longitude: lon }
     report = null
     dailyForecastReport = null
     airQualityReport = null
     cancelEditingLocation()
-    refetchView()
+    refetchView(false)
   }
 
   function clearPeek() {
     if (!peekLocation && !peeking) return
+    beginWeatherTransition("location")
     peekLocation = null
     report = null
     dailyForecastReport = null
     airQualityReport = null
-    refetchView()
+    refetchView(false)
   }
 
   function commitLocation() {
@@ -524,6 +1180,13 @@ Panel {
     if (!geocodeProc.running) startGeocode()
   }
 
+  Timer {
+    id: geocodeChaseTimer
+    interval: 0
+    repeat: false
+    onTriggered: root.startGeocode()
+  }
+
   function startGeocode() {
     geocodeActiveQuery = geocodePendingQuery
     geocodeProc.command = Model.curlGet(
@@ -615,9 +1278,8 @@ Panel {
         try {
           var parsed = JSON.parse(raw)
           root.report = parsed
-          if (!root.peeking && !root.hasHomeCoordinates)
-            root.label = Model.provisionalCurrentIcon(parsed.current_condition && parsed.current_condition[0], root.label)
-          if (!root.peeking) root.homeLabel = root.label
+          if (!root.hasHomeCoordinates)
+            root.rememberHomeCurrent(parsed.current_condition && parsed.current_condition[0], true)
           root.forecastRetries = 0
           if (Model.weatherResponseCompletesSave(root.hasConfiguredCoordinates, "wttr"))
             root.finishSavingLocation()
@@ -693,11 +1355,9 @@ Panel {
           var parsedCurrent = Model.openMeteoCurrentCondition(parsed)
           root.dailyForecastReport = parsed
           root.forecastFetchedAt = Qt.formatTime(new Date(), root.use12Hour ? "h:mm AP" : "HH:mm")
-          if (!root.peeking) {
-            root.label = Model.currentIcon(parsedCurrent, root.label)
-            root.homeLabel = root.label
-          }
+          root.rememberHomeCurrent(parsedCurrent, false)
           root.dailyForecastRetries = 0
+          root.completeWeatherTransition()
           if (!root.peeking && Model.weatherResponseCompletesSave(root.hasHomeCoordinates, "open-meteo"))
             root.finishSavingLocation()
         } catch (e) {
@@ -744,7 +1404,11 @@ Panel {
         root.locationSuggestions = root.editingLocation ? Model.parseGeocodingResults(text) : []
         root.suggestionIndex = 0
         root.suggestionPicked = false
-        if (root.geocodePendingQuery !== root.geocodeActiveQuery) Qt.callLater(root.startGeocode)
+        // The query moved on while this one was out. Chase it, coalesced and
+        // owned, so a burst of typing ends in one more request rather than one
+        // per keystroke — and so a panel closed mid-search queues nothing into
+        // its own teardown.
+        if (root.geocodePendingQuery !== root.geocodeActiveQuery) geocodeChaseTimer.restart()
       }
     }
   }
@@ -770,7 +1434,7 @@ Panel {
         forecastProc.running = false
         dailyForecastProc.running = false
         airQualityProc.running = false
-        Qt.callLater(root.refresh)
+        root.scheduleRefresh()
       }
     }
   }
@@ -818,6 +1482,16 @@ Panel {
     function edit(): void { root.openFromHotkey(); root.startEditingLocation() }
     function settings(): void { root.mainView = "settings" }
     function forecast(): void { root.mainView = "forecast" }
+    // Fire a lightning strike now, rather than waiting out the random timer.
+    function strike(): void { skyDeck.triggerStrike() }
+    // Force a sky state for a look: clear, night, cloudy, rain, snow, storm.
+    // Anything else (or "off") hands the deck back to the live observation.
+    function sky(mode: string): void {
+      var m = String(mode || "").toLowerCase()
+      var known = ["clear", "night", "cloudy", "rain", "snow", "storm"]
+      root.skyPreview = known.indexOf(m) >= 0 ? m : ""
+      root.openFromHotkey()
+    }
   }
 
 KeyboardPanel {
@@ -839,6 +1513,18 @@ KeyboardPanel {
       id: keyCatcher
       anchors.fill: parent
       blocked: root.editingLocation
+      onMoveRequested: function(dx, dy) {
+        if (root.mainView !== "forecast") return
+        if (dx !== 0 && root.carouselCount > 1) {
+          root.stepCarousel(dx)
+          return
+        }
+        if (dy !== 0 && weatherScroll.contentHeight > weatherScroll.height) {
+          weatherScroll.contentY = Math.max(0, Math.min(
+            weatherScroll.contentHeight - weatherScroll.height,
+            weatherScroll.contentY + dy * Style.space(72)))
+        }
+      }
       onReturnRequested: root.startEditingLocation()
       onCloseRequested: {
         if (root.mainView === "settings") root.showForecastView()
@@ -973,7 +1659,7 @@ KeyboardPanel {
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.verticalCenterOffset: 5
                 text: root.label || "—"
-                color: root.bar.foreground
+                color: root.weatherAccent
                 font.family: root.bar.fontFamily
                 font.pixelSize: 64
               }
@@ -985,21 +1671,36 @@ KeyboardPanel {
                 Text {
                   textFormat: Text.PlainText
                   id: tempBig
-                  text: root.reportTempNum || "—"
-                  color: root.bar.foreground
+                  text: root.displayedTempNum
+                  color: root.temperatureMotionColor
                   font.family: root.bar.fontFamily
                   font.pixelSize: 56
                   font.bold: true
+                  scale: 1 + root.temperatureFlash * 0.055
+                  transformOrigin: Item.Center
                 }
 
                 Text {
                   textFormat: Text.PlainText
                   text: root.current ? root.tempUnit : ""
-                  color: root.bar.foreground
+                  color: root.temperatureMotionColor
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.display
                   anchors.top: tempBig.top
                   anchors.topMargin: Style.space(10)
+                }
+
+                Text {
+                  textFormat: Text.PlainText
+                  width: Style.space(13)
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.temperatureDirection > 0 ? "↗" : "↘"
+                  color: root.temperatureMotionColor
+                  opacity: root.temperatureFlash
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  font.bold: true
+                  scale: 0.72 + root.temperatureFlash * 0.36
                 }
               }
             }
@@ -1292,14 +1993,635 @@ KeyboardPanel {
             }
           }
 
-          Text {
-            textFormat: Text.PlainText
+          Row {
             visible: root.mainView === "forecast" && !root.current
-            text: root.weatherUnavailable ? "Couldn't reach the weather service — will retry." : "Fetching forecast…"
-            color: root.dimText
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            font.italic: true
+            spacing: Style.space(7)
+
+            MorphingWeatherLoader {
+              width: Style.space(22)
+              height: Style.space(22)
+              anchors.verticalCenter: parent.verticalCenter
+              accentColor: root.weatherAccent
+              running: !root.weatherUnavailable
+              visible: running
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.weatherUnavailable ? "Couldn't reach the weather service — will retry." : "Fetching forecast…"
+              color: root.dimText
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              font.italic: true
+            }
+          }
+
+          // ---- FORECAST ORBIT -----------------------------------------------
+          // A ten-day, mouse-draggable carousel inspired by an astronomical
+          // dial: every day stays visible on the ellipse while depth, scale,
+          // opacity, tilt, and z-order make the front position feel physical.
+          Column {
+            id: carouselSection
+            visible: root.mainView === "forecast" && root.showForecast && root.carouselCount > 0
+            width: parent.width
+            spacing: Style.space(8)
+
+            Item {
+              width: parent.width
+              implicitHeight: carouselHeader.implicitHeight
+
+              PanelSectionHeader {
+                id: carouselHeader
+                text: "FORECAST ORBIT"
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                text: "DRAG  ·  SCROLL  ·  ← →"
+                color: root.dimText
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                font.letterSpacing: root.capsLetterSpacing * 0.65
+              }
+            }
+
+            Item {
+              id: carouselStage
+              width: parent.width
+              height: Style.space(278)
+              opacity: root.carouselReveal
+              scale: root.carouselLift
+              transformOrigin: Item.Center
+              clip: false
+
+              // Condition-colored atmosphere: two nearly transparent fields
+              // drift out of phase while a huge ghost glyph moves behind the
+              // orbit. Low alpha keeps this legible in both dark and light
+              // themes, and changing days crossfades the entire mood.
+              Rectangle {
+                anchors.centerIn: parent
+                anchors.horizontalCenterOffset: Math.cos(root.weatherAmbientPhase) * Style.space(118)
+                anchors.verticalCenterOffset: Math.sin(root.weatherAmbientPhase * 0.73) * Style.space(42)
+                z: -8
+                width: Style.space(250)
+                height: width
+                radius: width / 2
+                color: Util.alpha(root.weatherAccent, 0.035)
+                scale: 0.94 + Math.sin(root.weatherAmbientPhase * 1.4) * 0.06
+              }
+
+              Rectangle {
+                anchors.centerIn: parent
+                anchors.horizontalCenterOffset: Math.cos(root.weatherAmbientPhase + Math.PI) * Style.space(138)
+                anchors.verticalCenterOffset: Math.sin(root.weatherAmbientPhase * 0.61 + 1.2) * Style.space(54)
+                z: -8
+                width: Style.space(192)
+                height: width
+                radius: width / 2
+                color: Util.alpha(root.weatherAccent, 0.024)
+              }
+
+              // Drifting cloud deck. Clipped to the stage so banks slide off
+              // the edge instead of bleeding into the metric rows below.
+              Item {
+                anchors.fill: parent
+                z: -6
+                clip: true
+
+                SkyDeck {
+                  id: skyDeck
+                  anchors.fill: parent
+                  anchors.margins: -Style.space(10)
+                  active: root.opened && root.mainView === "forecast"
+                  storm: root.skyStorm
+                  phase: root.weatherAmbientPhase
+                  density: root.skyCloudCover
+                  windSpeed: root.skyWindSpeed
+                  windFromDeg: root.skyWindFromDeg
+                  precip: root.skyPrecip
+                  snow: root.skySnow
+                  night: root.skyIsNight
+                  sunProgress: root.skySunProgress
+                  accentColor: root.weatherAccent
+                  urgentColor: Color.urgent
+                }
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                anchors.centerIn: parent
+                anchors.horizontalCenterOffset: Math.cos(root.weatherAmbientPhase * 0.52) * Style.space(18)
+                anchors.verticalCenterOffset: Math.sin(root.weatherAmbientPhase * 0.68) * Style.space(11)
+                z: -7
+                text: root.carouselDay ? root.iconForOpenMeteoCode(root.carouselDay.code, false) : ""
+                color: root.weatherAccent
+                opacity: 0.035
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.space(176)
+                rotation: Math.sin(root.weatherAmbientPhase * 0.44) * 2.2
+                scale: 0.96 + Math.sin(root.weatherAmbientPhase * 0.83) * 0.035
+              }
+
+              WeatherEnergyCore {
+                anchors.centerIn: parent
+                z: -1
+                width: Style.space(292)
+                height: Style.space(186)
+                active: root.opened && root.mainView === "forecast"
+                storm: root.carouselStorm
+                phase: root.weatherCorePhase
+                accentColor: root.weatherAccent
+                urgentColor: Color.urgent
+              }
+
+              // Soft concentric halos give the center card some depth without
+              // depending on a theme-specific shadow or external effect.
+              Rectangle {
+                anchors.centerIn: parent
+                z: 110
+                width: Style.space(238)
+                height: Style.space(136)
+                radius: width / 2
+                color: "transparent"
+                border.width: Math.max(1, Style.space(1))
+                border.color: Util.alpha(root.weatherAccent, 0.15)
+                scale: 1.0 + 0.025 * Math.sin(root.carouselAngle * Math.PI / 180)
+              }
+
+              Rectangle {
+                anchors.centerIn: parent
+                z: 115
+                width: Style.space(258)
+                height: Style.space(150)
+                radius: width / 2
+                color: "transparent"
+                border.width: Math.max(1, Style.space(2))
+                border.color: Color.urgent
+                opacity: root.carouselStorm
+                  ? 0.30 + (Math.sin(root.weatherAmbientPhase * 3) + 1) * 0.18
+                  : 0
+                scale: root.carouselStorm
+                  ? 1.0 + (Math.sin(root.weatherAmbientPhase * 3) + 1) * 0.025
+                  : 0.96
+
+                Behavior on opacity { NumberAnimation { duration: 300 } }
+                Behavior on scale { NumberAnimation { duration: 360; easing.type: Easing.OutBack } }
+              }
+
+              Rectangle {
+                anchors.centerIn: parent
+                // No card, no chrome: the hero reads as light on the orbit,
+                // not as a panel stacked on top of one. Selection and mood are
+                // carried entirely by type weight, accent color, and the
+                // energy core breathing behind it.
+                z: 120
+                width: Style.space(240)
+                height: Style.space(126)
+                radius: 0
+                color: "transparent"
+                border.width: 0
+                opacity: root.carouselDetailReveal
+                scale: 0.94 + root.carouselDetailReveal * 0.06
+
+                Column {
+                  anchors.centerIn: parent
+                  width: parent.width - Style.space(24)
+                  spacing: Style.space(2)
+
+                  Text {
+                    textFormat: Text.PlainText
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    text: root.carouselDay
+                      ? ((root.carouselDay.isToday ? "TODAY" : root.dayName(root.carouselDay.date).toUpperCase())
+                        + "  ·  " + Qt.formatDate(new Date(root.carouselDay.date + "T12:00:00"), "MMM d").toUpperCase())
+                      : ""
+                    color: root.dimText
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    font.letterSpacing: root.capsLetterSpacing
+                  }
+
+                  Item { width: 1; height: Style.space(4) }
+
+                  Rectangle {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: Style.space(44)
+                    height: Math.max(1, Style.space(1))
+                    radius: height / 2
+                    color: Util.alpha(root.carouselStorm ? Color.urgent : root.weatherAccent, 0.55)
+                  }
+
+                  Item { width: 1; height: Style.space(6) }
+
+                  Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: Style.space(10)
+
+                    Text {
+                      textFormat: Text.PlainText
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: root.carouselDay ? root.iconForOpenMeteoCode(root.carouselDay.code, false) : ""
+                      color: root.carouselStorm ? Color.urgent : root.weatherAccent
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.title
+                    }
+
+                    Column {
+                      anchors.verticalCenter: parent.verticalCenter
+                      spacing: 0
+
+                      Text {
+                        textFormat: Text.PlainText
+                        text: root.carouselDay
+                          ? root.bareTempForDay(root.carouselDay, "max") + "  /  " + root.bareTempForDay(root.carouselDay, "min")
+                          : ""
+                        color: root.bar.foreground
+                        font.family: root.bar.fontFamily
+                        font.pixelSize: Style.font.display
+                        font.bold: true
+                      }
+
+                      Text {
+                        textFormat: Text.PlainText
+                        text: root.carouselDay ? Model.conditionLabel(root.carouselDay.code).toUpperCase() : ""
+                        color: root.dimText
+                        font.family: root.bar.fontFamily
+                        font.pixelSize: Style.font.caption
+                        font.letterSpacing: root.capsLetterSpacing * 0.8
+                      }
+                    }
+                  }
+                }
+              }
+
+              Canvas {
+                id: carouselTrack
+                anchors.fill: parent
+                opacity: 0.52
+                z: -2
+
+                onPaint: {
+                  var ctx = getContext("2d")
+                  ctx.reset()
+                  ctx.beginPath()
+                  ctx.ellipse(width / 2, height / 2, width * 0.405, Style.space(94), 0, 0, Math.PI * 2)
+                  ctx.strokeStyle = Util.alpha(root.weatherAccent, 0.42).toString()
+                  ctx.lineWidth = Math.max(1, Style.space(1))
+                  ctx.setLineDash([Style.space(3), Style.space(8)])
+                  ctx.stroke()
+                }
+
+                onWidthChanged: requestPaint()
+                onHeightChanged: requestPaint()
+
+                Connections {
+                  target: root
+                  function onWeatherAccentChanged() { carouselTrack.requestPaint() }
+                }
+              }
+
+              Repeater {
+                id: carouselRepeater
+                model: root.daily
+
+                Item {
+                  id: orbitCard
+                  required property var modelData
+                  required property int index
+
+                  readonly property real radians: (root.carouselAngle + index * root.carouselStep) * Math.PI / 180
+                  readonly property real depth: (Math.sin(radians) + 1) / 2
+                  readonly property bool selected: index === root.carouselSelectedIndex
+                  readonly property bool hovered: index === root.carouselHoverIndex
+                  readonly property bool storm: root.isStormCode(modelData.code)
+                  readonly property color dayAccent: root.weatherAccentForCode(modelData.code)
+                  readonly property real baseScale: 0.62 + depth * 0.40
+
+                  width: Style.space(64)
+                  height: Style.space(82)
+                  x: carouselStage.width / 2 + Math.cos(radians) * carouselStage.width * 0.405 - width / 2
+                  y: carouselStage.height / 2 + Math.sin(radians) * Style.space(94) - height / 2
+                  // Only the focused card crosses in front of the hub. The
+                  // remaining days travel behind it, selling the 3D orbit
+                  // instead of looking like a flat ring of overlapping tiles.
+                  z: selected ? 500 : Math.round(depth * 80)
+                  opacity: selected ? 1 : 0.34 + depth * 0.58
+                  scale: baseScale * (selected ? 1.14 : (hovered ? 1.07 : 1))
+
+                  transform: [
+                    Rotation {
+                      origin.x: orbitCard.width / 2
+                      origin.y: orbitCard.height / 2
+                      axis { x: 0; y: 1; z: 0 }
+                      angle: -Math.cos(orbitCard.radians) * 16
+                    },
+                    Rotation {
+                      origin.x: orbitCard.width / 2
+                      origin.y: orbitCard.height / 2
+                      axis { x: 0; y: 0; z: 1 }
+                      angle: root.carouselLean * (0.52 + orbitCard.depth * 0.48)
+                    }
+                  ]
+
+                  Behavior on scale {
+                    NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+                  }
+
+                  Rectangle {
+                    anchors.fill: parent
+                    anchors.margins: -Style.space(5)
+                    radius: Math.min(Style.space(14), Style.cornerRadius * 1.5)
+                    color: "transparent"
+                    border.width: Math.max(1, Style.space(1))
+                    border.color: Util.alpha(Color.urgent, orbitCard.storm ? 0.26 : 0)
+                    opacity: orbitCard.storm ? 1 : 0
+
+                    SequentialAnimation on scale {
+                      running: orbitCard.selected && root.opened && !root.carouselDragging
+                      loops: Animation.Infinite
+                      NumberAnimation { to: 1.06; duration: 950; easing.type: Easing.InOutSine }
+                      NumberAnimation { to: 1.0; duration: 950; easing.type: Easing.InOutSine }
+                    }
+                  }
+
+                  Rectangle {
+                    anchors.fill: parent
+                    radius: Math.min(Style.space(10), Style.cornerRadius)
+                    // Days float free. Depth already encodes distance via
+                    // scale and opacity, so a tile border only adds noise.
+                    color: orbitCard.hovered && !orbitCard.selected
+                      ? Util.alpha(root.bar.foreground, 0.07)
+                      : "transparent"
+                    border.width: 0
+
+                    Behavior on color { ColorAnimation { duration: 150 } }
+                    Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                    Column {
+                      anchors.centerIn: parent
+                      width: parent.width
+                      spacing: Style.space(2)
+
+                      Text {
+                        textFormat: Text.PlainText
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        text: orbitCard.modelData.isToday ? "TODAY" : root.dayAbbr(orbitCard.modelData.date).toUpperCase()
+                        color: orbitCard.selected ? root.bar.foreground : root.dimText
+                        font.family: root.bar.fontFamily
+                        font.pixelSize: Style.font.caption
+                        font.bold: orbitCard.selected
+                      }
+
+                      Text {
+                        textFormat: Text.PlainText
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        text: root.iconForOpenMeteoCode(orbitCard.modelData.code, false)
+                        color: orbitCard.storm ? Color.urgent : orbitCard.dayAccent
+                        font.family: root.bar.fontFamily
+                        font.pixelSize: Style.font.title
+                      }
+
+                      Text {
+                        textFormat: Text.PlainText
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        text: root.bareTempForDay(orbitCard.modelData, "max")
+                        color: root.bar.foreground
+                        font.family: root.bar.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: orbitCard.selected
+                      }
+
+                      Text {
+                        textFormat: Text.PlainText
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        text: root.bareTempForDay(orbitCard.modelData, "min")
+                        color: root.dimText
+                        font.family: root.bar.fontFamily
+                        font.pixelSize: Style.font.caption
+                      }
+                    }
+                  }
+
+                  Rectangle {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.top: parent.bottom
+                    anchors.topMargin: Style.space(4)
+                    width: parent.width * 0.52
+                    height: Math.max(1, Style.space(2))
+                    radius: height / 2
+                    color: Util.alpha(orbitCard.storm ? Color.urgent : orbitCard.dayAccent, 0.92)
+                    opacity: orbitCard.selected ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: 160 } }
+                  }
+                }
+              }
+
+              MouseArea {
+                id: carouselMouse
+                anchors.fill: parent
+                z: 1000
+                hoverEnabled: true
+                acceptedButtons: Qt.LeftButton
+                cursorShape: root.carouselDragging
+                  ? Qt.ClosedHandCursor
+                  : (root.carouselHoverIndex >= 0 ? Qt.PointingHandCursor : Qt.OpenHandCursor)
+
+                onEntered: {
+                  root.carouselPointerInside = true
+                  root.updateCarouselHover(mouseX, mouseY)
+                }
+                onExited: {
+                  if (!pressed) {
+                    root.carouselPointerInside = false
+                    root.carouselHoverIndex = -1
+                  }
+                }
+                onPressed: function(mouse) {
+                  keyCatcher.forceActiveFocus()
+                  carouselSnap.stop()
+                  root.carouselSettling = false
+                  root.carouselDragging = true
+                  root.carouselLastInteractionMs = Date.now()
+                  root.carouselPressX = mouse.x
+                  root.carouselLastX = mouse.x
+                  root.carouselLastMs = Date.now()
+                  root.carouselVelocity = 0
+                  root.carouselDragDistance = 0
+                  mouse.accepted = true
+                }
+                onPositionChanged: function(mouse) {
+                  root.updateCarouselHover(mouse.x, mouse.y)
+                  if (!pressed) return
+                  var now = Date.now()
+                  var dx = mouse.x - root.carouselLastX
+                  var elapsed = Math.max(1, now - root.carouselLastMs)
+                  root.carouselAngle += dx * 0.42
+                  var instantVelocity = dx * 0.42 / elapsed
+                  root.carouselVelocity = root.carouselVelocity * 0.68 + instantVelocity * 0.32
+                  if (Math.abs(dx) > 0.5) root.weatherWipeDirection = dx > 0 ? 1 : -1
+                  carouselLeanReset.stop()
+                  root.carouselLean = Math.max(-11, Math.min(11, dx * 0.9))
+                  root.carouselDragDistance += Math.abs(dx)
+                  root.carouselLastX = mouse.x
+                  root.carouselLastMs = now
+                }
+                onReleased: function(mouse) {
+                  root.carouselDragging = false
+                  carouselLeanReset.restart()
+                  if (!containsMouse) root.carouselPointerInside = false
+
+                  if (root.carouselDragDistance < Style.space(7)) {
+                    var clickedIndex = root.carouselCardAt(mouse.x, mouse.y)
+                    if (clickedIndex >= 0) root.focusCarouselDay(clickedIndex)
+                    else root.focusCarouselDay(root.carouselSelectedIndex)
+                  } else {
+                    var projectedAngle = root.carouselAngle + root.carouselVelocity * 180
+                    root.settleCarousel((root.carouselFocusAngle - projectedAngle) / root.carouselStep)
+                  }
+                  root.carouselHoverIndex = containsMouse ? root.carouselCardAt(mouse.x, mouse.y) : -1
+                }
+                onCanceled: {
+                  root.carouselDragging = false
+                  carouselLeanReset.restart()
+                  root.focusCarouselDay(root.carouselSelectedIndex)
+                }
+                onWheel: function(wheel) {
+                  var delta = Math.abs(wheel.angleDelta.y) >= Math.abs(wheel.angleDelta.x)
+                    ? wheel.angleDelta.y
+                    : wheel.angleDelta.x
+                  if (delta !== 0) root.stepCarousel(delta < 0 ? 1 : -1)
+                  wheel.accepted = true
+                }
+              }
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(6)
+              opacity: root.carouselDetailReveal
+
+              Repeater {
+                model: root.carouselDay ? [
+                  {
+                    label: "RAIN",
+                    value: root.carouselDay.precipProb !== "" && isFinite(Number(root.carouselDay.precipProb))
+                      ? root.carouselDay.precipProb + "%"
+                      : "—",
+                    kind: "liquid",
+                    level: root.carouselDay.precipProb !== "" && isFinite(Number(root.carouselDay.precipProb))
+                      ? Number(root.carouselDay.precipProb) / 100
+                      : -1
+                  },
+                  { label: "UV", value: root.carouselUv ? root.carouselUv.label : "—", kind: "text", level: -1 },
+                  { label: "SUNRISE", value: root.carouselDay.sunrise ? Model.formatClock(root.carouselDay.sunrise, root.use12Hour) : "—", kind: "text", level: -1 },
+                  { label: "SUNSET", value: root.carouselDay.sunset ? Model.formatClock(root.carouselDay.sunset, root.use12Hour) : "—", kind: "text", level: -1 }
+                ] : []
+
+                Rectangle {
+                  id: orbitDetailCell
+                  required property var modelData
+                  property real animatedLevel: modelData.kind === "liquid"
+                    ? Math.max(0, Math.min(1, Number(modelData.level)))
+                    : 0
+                  width: (carouselSection.width - Style.space(18)) / 4
+                  height: Style.space(46)
+                  radius: Math.min(Style.space(8), Style.cornerRadius)
+                  color: Util.alpha(root.bar.foreground, 0.045)
+                  border.width: Math.max(1, Style.space(1))
+                  border.color: Util.alpha(root.bar.foreground, 0.07)
+                  clip: true
+
+                  Behavior on animatedLevel {
+                    NumberAnimation { duration: 680; easing.type: Easing.OutQuint }
+                  }
+
+                  Canvas {
+                    id: liquidCanvas
+                    anchors.fill: parent
+                    visible: orbitDetailCell.modelData.kind === "liquid"
+                      && Number(orbitDetailCell.modelData.level) >= 0
+                    antialiasing: true
+
+                    onPaint: {
+                      var ctx = getContext("2d")
+                      ctx.clearRect(0, 0, width, height)
+                      if (!visible) return
+                      var level = orbitDetailCell.animatedLevel
+                      var fillY = height * (1 - level)
+                      var amplitude = level > 0.02 && level < 0.98 ? Style.space(2.4) : 0
+                      var phase = root.weatherWavePhase
+
+                      ctx.beginPath()
+                      ctx.moveTo(0, fillY)
+                      ctx.bezierCurveTo(
+                        width * 0.33, fillY + Math.sin(phase) * amplitude,
+                        width * 0.67, fillY + Math.cos(phase + Math.PI) * amplitude,
+                        width, fillY)
+                      ctx.lineTo(width, height)
+                      ctx.lineTo(0, height)
+                      ctx.closePath()
+                      ctx.fillStyle = Util.alpha(root.weatherAccent, 0.28).toString()
+                      ctx.fill()
+                    }
+
+                    Connections {
+                      target: root
+                      enabled: liquidCanvas.visible
+                      function onWeatherWavePhaseChanged() { liquidCanvas.requestPaint() }
+                      function onWeatherAccentChanged() { liquidCanvas.requestPaint() }
+                    }
+
+                    Connections {
+                      target: orbitDetailCell
+                      function onAnimatedLevelChanged() { liquidCanvas.requestPaint() }
+                      function onWidthChanged() { liquidCanvas.requestPaint() }
+                      function onHeightChanged() { liquidCanvas.requestPaint() }
+                    }
+                  }
+
+                  Column {
+                    z: 1
+                    anchors.centerIn: parent
+                    width: parent.width - Style.space(8)
+                    spacing: Style.space(1)
+
+                    Text {
+                      textFormat: Text.PlainText
+                      width: parent.width
+                      horizontalAlignment: Text.AlignHCenter
+                      text: modelData.label
+                      color: root.dimText
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.caption
+                      font.letterSpacing: root.capsLetterSpacing * 0.7
+                    }
+
+                    Text {
+                      textFormat: Text.PlainText
+                      width: parent.width
+                      horizontalAlignment: Text.AlignHCenter
+                      elide: Text.ElideRight
+                      text: modelData.value
+                      color: root.bar.foreground
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      font.bold: true
+                    }
+                  }
+                }
+              }
+            }
           }
 
           // ---- HOURLY ----------------------------------------------------------
@@ -1352,19 +2674,29 @@ KeyboardPanel {
             }
 
             Flickable {
+              id: hourlyStrip
+              readonly property real edgeInset: Style.space(2)
+              readonly property real cellGap: Style.space(4)
+              readonly property real fittedCellWidth: {
+                var count = root.hourly.length
+                if (count < 1) return Style.space(52)
+                var gaps = cellGap * (count + 1)
+                var available = width - edgeInset * 2 - gaps
+                return Math.max(Style.space(52), available / count)
+              }
               width: parent.width
               height: hourRow.implicitHeight
               contentWidth: hourRow.implicitWidth
               contentHeight: hourRow.implicitHeight
               clip: true
               boundsBehavior: Flickable.StopAtBounds
-              interactive: hourRow.implicitWidth > width
+              interactive: hourRow.implicitWidth > width + 0.5
 
               Row {
                 id: hourRow
-                spacing: Style.space(4)
+                spacing: hourlyStrip.cellGap
 
-                Item { width: Style.space(2); height: 1 }
+                Item { width: hourlyStrip.edgeInset; height: 1 }
 
                 Repeater {
                   id: hourRepeater
@@ -1373,7 +2705,7 @@ KeyboardPanel {
                   Item {
                     required property var modelData
                     required property int index
-                    width: Style.space(52)
+                    width: hourlyStrip.fittedCellWidth
                     height: hourCellColumn.implicitHeight + Style.space(8)
 
                     Rectangle {
@@ -1430,7 +2762,7 @@ KeyboardPanel {
                   }
                 }
 
-                Item { width: Style.space(12); height: 1 }
+                Item { width: hourlyStrip.edgeInset; height: 1 }
               }
             }
           }
@@ -1654,91 +2986,6 @@ KeyboardPanel {
               }
             }
           }
-
-          // ---- 10-DAY FORECAST --------------------------------------------
-
-          Column {
-            visible: root.mainView === "forecast" && root.showForecast && root.daily.length > 0
-            width: parent.width
-            spacing: Style.space(8)
-
-            PanelSectionHeader {
-              text: "10-DAY FORECAST"
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-            }
-
-            RowLayout {
-              width: parent.width
-              spacing: Style.space(6)
-
-              Repeater {
-                model: root.daily
-
-                Rectangle {
-                  required property var modelData
-                  Layout.fillWidth: true
-                  Layout.minimumWidth: 0
-                  clip: true
-                  height: root.metricCellHeight + Style.space(32)
-                  radius: Math.min(4, Style.cornerRadius)
-                  color: modelData.isToday ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.1) : Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.05)
-
-                  Column {
-                    width: parent.width
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: Style.space(2)
-
-                    Text {
-                      textFormat: Text.PlainText
-                      width: parent.width
-                      horizontalAlignment: Text.AlignHCenter
-                      elide: Text.ElideRight
-                      text: root.dayAbbr(modelData.date).toUpperCase()
-                      color: modelData.isToday ? root.bar.foreground : root.dimText
-                      font.family: root.bar.fontFamily
-                      font.pixelSize: Style.font.caption
-                      font.bold: modelData.isToday
-                    }
-
-                    Text {
-                      textFormat: Text.PlainText
-                      width: parent.width
-                      horizontalAlignment: Text.AlignHCenter
-                      text: root.iconForOpenMeteoCode(modelData.code, false)
-                      color: root.bar.foreground
-                      font.family: root.bar.fontFamily
-                      font.pixelSize: Style.font.heading
-                    }
-
-                    Text {
-                      textFormat: Text.PlainText
-                      width: parent.width
-                      horizontalAlignment: Text.AlignHCenter
-                      elide: Text.ElideRight
-                      text: root.bareTempForDay(modelData, "max")
-                      color: root.bar.foreground
-                      font.family: root.bar.fontFamily
-                      font.pixelSize: Style.font.caption
-                    }
-
-                    Text {
-                      textFormat: Text.PlainText
-                      width: parent.width
-                      horizontalAlignment: Text.AlignHCenter
-                      elide: Text.ElideRight
-                      text: root.bareTempForDay(modelData, "min")
-                      color: root.dimText
-                      font.family: root.bar.fontFamily
-                      font.pixelSize: Style.font.caption
-                    }
-                  }
-                }
-              }
-            }
-          }
-
-
         }
       }
 
@@ -1969,6 +3216,47 @@ KeyboardPanel {
             }
 
             PanelSectionHeader {
+              text: "FORECAST ORBIT"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+            }
+
+            Item {
+              width: parent.width
+              height: Style.spacing.controlHeight
+
+              Column {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(2)
+
+                Text {
+                  textFormat: Text.PlainText
+                  text: "Auto-spin"
+                  color: root.bar.foreground
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+
+                Text {
+                  textFormat: Text.PlainText
+                  text: "Advance after 6.5 seconds idle; pauses under the pointer"
+                  color: root.dimText
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+
+              ToggleSwitch {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                checked: root.orbitAutoSpin
+                foreground: root.bar.foreground
+                onToggled: root.persistSetting("orbitAutoSpin", !root.orbitAutoSpin)
+              }
+            }
+
+            PanelSectionHeader {
               text: "ALERTS"
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
@@ -2007,6 +3295,26 @@ KeyboardPanel {
               font.pixelSize: Style.font.bodySmall
             }
           }
+      }
+
+      WeatherWaveWipe {
+        id: forecastWaveWipe
+        anchors.top: chromeBar.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        z: 900
+        active: root.weatherWipeActive && root.mainView === "forecast"
+        progress: root.weatherWipeProgress
+        direction: root.weatherWipeDirection
+        accentColor: root.weatherWipeAccent
+        surfaceColor: Color.popups.background
+        foregroundColor: root.bar.foreground
+        glyph: root.carouselDay
+          ? root.iconForOpenMeteoCode(root.carouselDay.code, false)
+          : (root.label || "")
+        label: root.weatherWipeLabel
+        fontFamily: root.bar.fontFamily
       }
     }
   }

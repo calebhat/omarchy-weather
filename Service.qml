@@ -135,8 +135,17 @@ Item {
       // carries across the move, and someone who changes city during weather
       // is told nothing because they were already told about somewhere else.
       notifiedLevel = 0
+      modelLevel = 0
       outlookLevel = 0
+      outlookEvent = ""
       outlookAtClock = ""
+      storeLatch(0)
+      // A different place has a different office, and quite possibly none.
+      forgetNws()
+    } else {
+      // Learning where we are is the other half of the stored latch, and it can
+      // arrive after the file does.
+      adoptLatch()
     }
 
     if (hasLocation && alertsEnabled) checkNow()
@@ -153,7 +162,17 @@ Item {
 
   // Highest severity found inside the lead window: 0 clear, 1 light, 2
   // moderate, 3 heavy, 4 severe.
+  //
+  // `modelLevel` is what Open-Meteo alone said. `outlookLevel` is what survives
+  // weighing that against the local forecast office, and is what the bar, the
+  // panel and the notification all read — a reading the office contradicts
+  // should not be showing in the bar either.
+  property int modelLevel: 0
   property int outlookLevel: 0
+
+  // Set when a National Weather Service alert is the reason for the level, so
+  // the toast can say "Severe Thunderstorm Warning" rather than paraphrase it.
+  property string outlookEvent: ""
   property int outlookLeadMinutes: 0
 
   // Wall-clock time the weather is expected, as "HH:MM". A relative figure
@@ -271,6 +290,10 @@ Item {
       + "&timezone=auto"
     forecastProc.command = RadarModel.curlGet(url, 12, RadarModel.MAX_ALERT_JSON_BYTES)
     forecastProc.running = true
+
+    // Asked alongside rather than after, so the two opinions describe the same
+    // moment and the verdict is not held waiting for a request that starts late.
+    refreshNws()
   }
 
   Process {
@@ -384,8 +407,332 @@ Item {
     outlookPrecipitation = peak
     outlookLeadMinutes = worst.lead
     outlookAtClock = worst.clock
-    outlookLevel = worst.level
+    modelLevel = worst.level
     lastCheckTime = Date.now()
+
+    settleOutlook()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Corroboration by the local forecast office
+  // ---------------------------------------------------------------------------
+  //
+  // See RadarModel's NWS section for why a second source exists at all. The
+  // shape here is: every poll asks the office the same two questions the model
+  // was asked — is anything in force, and do you expect rain — and the verdict
+  // waits briefly for the answers rather than racing them.
+  //
+  // Waiting matters more than it looks. Any plugin writing in its own directory
+  // rebuilds this service, which empties this state, and a verdict reached
+  // before the office has answered is a verdict reached on the model alone.
+  // That is precisely the reading the office exists to check.
+
+  property bool nwsResolved: false
+  property bool nwsSupported: false
+  property string nwsHourlyUrl: ""
+
+  // Which place the figures below describe. Coordinates can move under a
+  // response that is still in flight, and an opinion about somewhere else is
+  // worse than no opinion at all.
+  property string nwsPlaceKey: ""
+  property int nwsAlertLevel: 0
+  property string nwsAlertEvent: ""
+  property int nwsPop: -1
+  property real nwsStamp: 0
+
+  // Requests still out for the current cycle, and whether a model reading is
+  // waiting on them.
+  property int nwsOutstanding: 0
+  property bool nwsPending: false
+
+  // Which place each request in flight was asked about. A response is only an
+  // answer to the question that was asked, and the coordinates can move while
+  // curl is running — the same discipline `requestedFor` applies to the model
+  // forecast. Without it, a points lookup that lands after a move installs the
+  // *old* city's gridpoint URL, and every later reading corroborates somewhere
+  // new against the forecast office of somewhere else.
+  property string nwsPointsFor: ""
+  property string nwsRequestedFor: ""
+
+  // Whether anything in the current cycle actually came back with data.
+  //
+  // This is what bounds staleness, and it has to be tracked rather than
+  // assumed. finishAlerts and finishHourly deliberately keep the previous
+  // answer when a request fails — "no warning in force" is a claim a failed
+  // request is not entitled to make — so a cycle where both fail leaves the old
+  // figures in place. Stamping the clock on that cycle anyway would mark those
+  // figures fresh, and a service that lost NWS for an afternoon would go on
+  // presenting a morning's "no rain expected" as current, indefinitely. The
+  // 45-minute limit in nwsSnapshot would never be reached, and a real storm
+  // could be suppressed by a reading nobody could still vouch for.
+  property bool nwsCycleAnswered: false
+
+  readonly property int nwsWindowHours: Math.max(2, Math.ceil(leadMinutes / 60))
+
+  function nwsSnapshot() {
+    return {
+      supported: nwsSupported,
+      // Fresh means recent *and* about here. Both can lapse on their own.
+      fresh: nwsStamp > 0
+        && (Date.now() - nwsStamp) >= 0
+        && (Date.now() - nwsStamp) < RadarModel.NWS_MAX_AGE_MS
+        && nwsPlaceKey === latchPlaceKey,
+      alertLevel: nwsAlertLevel,
+      alertEvent: nwsAlertEvent,
+      maxPop: nwsPop
+    }
+  }
+
+  function forgetNws() {
+    nwsResolved = false
+    nwsSupported = false
+    nwsHourlyUrl = ""
+    nwsPlaceKey = ""
+    nwsAlertLevel = 0
+    nwsAlertEvent = ""
+    nwsPop = -1
+    nwsStamp = 0
+    nwsOutstanding = 0
+    nwsPointsFor = ""
+    nwsRequestedFor = ""
+    nwsCycleAnswered = false
+  }
+
+  function refreshNws() {
+    // The README promises that with storm alerts off — the default —
+    // api.weather.gov is never contacted. Every caller happens to check that
+    // already, but a promise about what the machine talks to should not rest on
+    // every future caller remembering. This is where it is true.
+    if (!alertsEnabled) return
+    if (!hasLocation) return
+
+    var lat = parseFloat(location.latitude)
+    var lon = parseFloat(location.longitude)
+    if (!isFinite(lat) || !isFinite(lon)) return
+
+    // Which office covers a coordinate does not change, so this is asked once
+    // per place rather than once per poll.
+    if (!nwsResolved) {
+      if (nwsPointsProc.running) return
+      nwsOutstanding++
+      nwsPointsFor = latchPlaceKey
+      nwsPointsProc.answered = false
+      nwsPointsProc.command = RadarModel.nwsCurlGet(
+        RadarModel.nwsPointsUrl(lat, lon), 12, RadarModel.MAX_ALERT_JSON_BYTES)
+      nwsPointsProc.running = true
+      return
+    }
+
+    if (!nwsSupported) return
+    if (nwsAlertsProc.running || nwsHourlyProc.running) return
+
+    nwsPlaceKey = latchPlaceKey
+    nwsRequestedFor = latchPlaceKey
+    nwsCycleAnswered = false
+    nwsOutstanding += 2
+    nwsAlertsProc.answered = false
+    nwsHourlyProc.answered = false
+    nwsAlertsProc.command = RadarModel.nwsCurlGet(
+      RadarModel.nwsAlertsUrl(lat, lon), 12, RadarModel.MAX_ALERT_JSON_BYTES)
+    nwsAlertsProc.running = true
+    nwsHourlyProc.command = RadarModel.nwsCurlGet(
+      nwsHourlyUrl, 15, RadarModel.MAX_ALERT_JSON_BYTES)
+    nwsHourlyProc.running = true
+  }
+
+  // One request has finished, however it went. A failure still counts as an
+  // answer here: what is being waited on is the round trip, not a result, and a
+  // request that failed is never going to produce one.
+  function nwsAnswered() {
+    nwsOutstanding = Math.max(0, nwsOutstanding - 1)
+    if (nwsOutstanding > 0) return
+    // Both halves are in, so the pair can be stamped as one opinion — but only
+    // if one of them brought something back. See nwsCycleAnswered.
+    if (nwsSupported && nwsCycleAnswered) nwsStamp = Date.now()
+    if (nwsPending) settleOutlook()
+  }
+
+  function parseNwsJson(raw) {
+    var text = String(raw || "")
+    if (RadarModel.rejectOversized(text, RadarModel.MAX_ALERT_JSON_BYTES)) return null
+    text = text.trim()
+    if (text === "") return null
+    try {
+      return JSON.parse(text)
+    } catch (e) {
+      return null
+    }
+  }
+
+  Process {
+    id: nwsPointsProc
+
+    // See forecastProc. A fork that never happened goes from running to not
+    // running in silence, and `exited` fires before `running` drops — so a drop
+    // with nothing recorded is the failure, and the flag is what tells them
+    // apart. It is armed at the call site rather than cleared here, because
+    // clearing it inside the handler lets the drop that follows an ordinary
+    // exit look like a second, empty answer.
+    property bool answered: false
+
+    onExited: {
+      answered = true
+      root.finishPoints(root.parseNwsJson(nwsPointsOut.text))
+    }
+    onRunningChanged: {
+      if (running || answered) return
+      root.finishPoints(null)
+    }
+
+    stdout: StdioCollector { id: nwsPointsOut; waitForEnd: true }
+  }
+
+  function finishPoints(data) {
+    // Answered about somewhere we have since left. Applying it would install
+    // that place's forecast office for this one.
+    if (nwsPointsFor !== latchPlaceKey) {
+      nwsAnswered()
+      return
+    }
+
+    // A point outside the United States answers 404 and curl reports failure,
+    // which arrives here as null. That is an answer — "no local office" — and
+    // is recorded so it is not asked again every ten minutes.
+    var parsed = RadarModel.parseNwsPoints(data)
+    nwsResolved = true
+    nwsSupported = parsed.supported
+    nwsHourlyUrl = parsed.hourlyUrl
+
+    // Resolving is not an opinion about the weather. Somewhere covered still
+    // has to be asked, and the reading waiting on it should not sit for a whole
+    // poll interval to find that out.
+    //
+    // The follow-up goes out *before* this request is marked answered. The
+    // other way round, the count reaches zero between the two and a reading
+    // held for the office settles on the model alone — having waited for, and
+    // then ignored, the very answer it was waiting for.
+    if (nwsSupported) refreshNws()
+    nwsAnswered()
+  }
+
+  Process {
+    id: nwsAlertsProc
+
+    // See forecastProc. A fork that never happened goes from running to not
+    // running in silence, and `exited` fires before `running` drops — so a drop
+    // with nothing recorded is the failure, and the flag is what tells them
+    // apart. It is armed at the call site rather than cleared here, because
+    // clearing it inside the handler lets the drop that follows an ordinary
+    // exit look like a second, empty answer.
+    property bool answered: false
+
+    onExited: {
+      answered = true
+      root.finishAlerts(root.parseNwsJson(nwsAlertsOut.text))
+    }
+    onRunningChanged: {
+      if (running || answered) return
+      root.finishAlerts(null)
+    }
+
+    stdout: StdioCollector { id: nwsAlertsOut; waitForEnd: true }
+  }
+
+  function finishAlerts(data) {
+    if (nwsRequestedFor !== latchPlaceKey) {
+      nwsAnswered()
+      return
+    }
+    // A feed that did not arrive leaves the previous answer standing rather
+    // than clearing it: "no warning in force" is a claim, and a failed request
+    // is not entitled to make it. What it must not do is refresh the clock on
+    // that standing answer, which is what nwsCycleAnswered records.
+    if (data) {
+      var outlook = RadarModel.nwsAlertOutlook(data)
+      nwsAlertLevel = outlook.level
+      nwsAlertEvent = outlook.event
+      nwsCycleAnswered = true
+    }
+    nwsAnswered()
+  }
+
+  Process {
+    id: nwsHourlyProc
+
+    // See forecastProc. A fork that never happened goes from running to not
+    // running in silence, and `exited` fires before `running` drops — so a drop
+    // with nothing recorded is the failure, and the flag is what tells them
+    // apart. It is armed at the call site rather than cleared here, because
+    // clearing it inside the handler lets the drop that follows an ordinary
+    // exit look like a second, empty answer.
+    property bool answered: false
+
+    onExited: {
+      answered = true
+      root.finishHourly(root.parseNwsJson(nwsHourlyOut.text))
+    }
+    onRunningChanged: {
+      if (running || answered) return
+      root.finishHourly(null)
+    }
+
+    stdout: StdioCollector { id: nwsHourlyOut; waitForEnd: true }
+  }
+
+  function finishHourly(data) {
+    if (nwsRequestedFor !== latchPlaceKey) {
+      nwsAnswered()
+      return
+    }
+    if (data) {
+      nwsPop = RadarModel.nwsMaxPop(data, nwsWindowHours)
+      nwsCycleAnswered = true
+    }
+    nwsAnswered()
+  }
+
+  // How long a model reading waits for the office before going ahead without
+  // it. Bounded on purpose: the whole point of the second source is to be
+  // consulted, but a service having a bad day must not be able to hold an alert
+  // indefinitely — that would turn an outage into silence, which is the one
+  // failure mode this plugin cannot afford.
+  Timer {
+    id: nwsWaitTimer
+    interval: 20000
+    repeat: false
+    running: root.nwsPending
+    onTriggered: root.settleOutlook(true)
+  }
+
+  // Turn the model reading into the one everything else reads, once there is
+  // something to weigh it against — or once waiting has stopped being useful.
+  function settleOutlook(expired) {
+    // Nothing has been asked yet for a place we have coordinates for. Ask now
+    // and hold the verdict for the answer.
+    if (!expired && alertsEnabled && hasLocation && !nwsResolved) {
+      nwsPending = true
+      refreshNws()
+      return
+    }
+
+    if (!expired && nwsOutstanding > 0) {
+      nwsPending = true
+      return
+    }
+
+    nwsPending = false
+
+    var verdict = RadarModel.corroborate(modelLevel, nwsSnapshot())
+    outlookLevel = verdict.level
+    outlookEvent = verdict.event
+
+    // A level the office supplied did not come out of the model's slots, so
+    // the lead and the clock that describe it do not apply. Saying "in about
+    // 1h" about a warning already in force would be worse than saying nothing.
+    if (verdict.source === "nws" && verdict.level > modelLevel) {
+      outlookLeadMinutes = 0
+      outlookAtClock = ""
+    }
 
     evaluateAlert()
   }
@@ -399,9 +746,106 @@ Item {
   // situation that worsens still escalates.
   property int notifiedLevel: 0
 
+  // The latch has to outlive the service, because the service does not outlive
+  // much. Any plugin writing inside its own directory reloads every plugin,
+  // and a reload destroys this service and builds a new one whose latch starts
+  // at zero — so the storm already announced is announced again, seconds
+  // later, word for word. One session saw four identical severe-storm toasts
+  // in twelve seconds while two unrelated plugins touched their own files
+  // during startup. A shell restart during weather does the same thing.
+  //
+  // What is remembered is the level and the place, not the forecast slot the
+  // reading came from. The slot slides forward as the window moves, so keying
+  // on it would call the same storm new every few minutes. A worsening storm
+  // still escalates, because a higher level does not match a lower stored one.
+  //
+  // The record expires, because a latch that never lets go is indistinguishable
+  // from an alert that never worked. Three hours is past the far edge of the
+  // longest lead this plugin can be configured for, so anything older belongs
+  // to different weather and deserves to be announced.
+  //
+  // Keyed off a binding rather than off `locationKey`: that one is written by
+  // the location change handler, which can run before the `hasLocation`
+  // binding it consults has been re-evaluated, leaving it empty for the life
+  // of a session. A binding is always current by the time a forecast lands.
+  readonly property string latchPlaceKey: hasLocation
+    ? location.latitude + "," + location.longitude + "|" + locationName
+    : ""
+  readonly property int latchMaxAgeMs: 3 * 60 * 60 * 1000
+  property bool latchLoaded: false
+  property var latchRecord: null
+  property bool latchEvaluatePending: false
+
+  FileView {
+    id: latchFile
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/detailed-weather-alert.json"
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.receiveLatch(text())
+    onLoadFailed: root.receiveLatch("")
+  }
+
+  function receiveLatch(text) {
+    var record = null
+    try {
+      record = JSON.parse(String(text || ""))
+    } catch (e) {
+      record = null
+    }
+    latchRecord = record && typeof record === "object" ? record : null
+    latchLoaded = true
+    adoptLatch()
+
+    // A check can finish before the file does. Holding the verdict rather than
+    // dropping it means the first reading of a session is still acted on, once
+    // the service knows what it has already said.
+    if (latchEvaluatePending) {
+      latchEvaluatePending = false
+      evaluateAlert()
+    }
+  }
+
+  // Take up the stored latch once both halves are known. This file and the
+  // location file load independently and either can win, so adoption is
+  // attempted from both sides rather than assuming an order.
+  function adoptLatch() {
+    if (!latchLoaded || latchPlaceKey === "") return
+    var record = latchRecord
+    if (!record) return
+    // Range-checked, because this arrives off disk: anything on the machine can
+    // write the file and it outlives a reboot, so a bogus level in it is not a
+    // transient. Left alone, one above the top band would sit in the latch over
+    // every real reading — no genuine storm could exceed it and notify — and
+    // the plugin would go quiet while looking like it was working.
+    //
+    // Rejected rather than clamped down to severe, which is the rule every
+    // other guard here follows: anything unusable means "you have told them
+    // nothing", risking one duplicate rather than one silence.
+    var level = Math.round(Number(record.level) || 0)
+    if (!isFinite(level) || level <= 0 || level > 4) return
+    if (String(record.location || "") !== latchPlaceKey) return
+    if (Date.now() - (Number(record.at) || 0) >= latchMaxAgeMs) return
+    if (level > notifiedLevel) notifiedLevel = level
+  }
+
+  function storeLatch(level) {
+    latchRecord = level > 0
+      ? { location: latchPlaceKey, level: level, at: Date.now() }
+      : null
+    latchFile.setText(JSON.stringify(latchRecord || { level: 0 }) + "\n")
+  }
+
   function evaluateAlert() {
     if (!alertsEnabled) {
       notifiedLevel = 0
+      return
+    }
+
+    // Deciding before the stored latch has been read is deciding without
+    // knowing what has already been said, which is how the same storm gets
+    // announced twice.
+    if (!latchLoaded) {
+      latchEvaluatePending = true
       return
     }
 
@@ -411,12 +855,20 @@ Item {
       // Clear the latch only once conditions drop under the threshold, so a
       // reading that flickers around the boundary cannot re-notify.
       notifiedLevel = 0
+      storeLatch(0)
       return
     }
+
+    // Every in-memory reset that was not a deliberate clear — settings briefly
+    // regressing to nothing, a service rebuilt by a plugin reload — is undone
+    // here before the decision is made. A deliberate clear empties the stored
+    // record too, so nothing that should have been forgotten comes back.
+    adoptLatch()
 
     if (outlookLevel <= notifiedLevel) return
 
     notifiedLevel = outlookLevel
+    storeLatch(outlookLevel)
     notify(outlookLevel, outlookLeadMinutes)
   }
 
@@ -447,9 +899,15 @@ Item {
     // case when someone turns alerts on during weather they can already see,
     // where "approaching" would contradict the "starting now" beneath it.
     var underway = lead <= 0
-    var headline = level >= 4
-      ? (underway ? "Severe storm overhead" : "Severe storm approaching")
-      : (underway ? name + " rain now" : name + " rain approaching")
+    // A warning has a name the reader already knows from every other channel
+    // that carries it, and it was written by the forecaster who issued it.
+    // Paraphrasing that into this plugin's own vocabulary would make an
+    // official warning look like a guess.
+    var headline = outlookEvent !== ""
+      ? outlookEvent
+      : (level >= 4
+        ? (underway ? "Severe storm overhead" : "Severe storm approaching")
+        : (underway ? name + " rain now" : name + " rain approaching"))
 
     // Both a relative and an absolute time. The relative one is what the eye
     // wants at the moment the toast appears; the absolute one is what saves it
@@ -562,13 +1020,32 @@ Item {
   onAlertRadiusKmChanged: applyAlertConfig()
   onSettingsReadyChanged: applyAlertConfig()
 
-  // Coalesced to the end of the turn. Bindings re-evaluate one at a time, so a
-  // single settings arrival moves the radius and the threshold in separate
-  // steps; comparing at each step would record the first as the baseline and
-  // read the second as a decision nobody made. Qt.callLater collapses repeated
-  // calls into one, so the comparison sees a settled state.
+  // Coalesced. Bindings re-evaluate one at a time, so a single settings arrival
+  // moves the radius and the threshold in separate steps; comparing at each
+  // step would record the first as the baseline and read the second as a
+  // decision nobody made — which clears the alert latch for a decision nobody
+  // took.
+  //
+  // A zero-interval Timer rather than Qt.callLater, for two reasons that point
+  // the same way. restart() collapses repeated calls exactly as callLater's
+  // identity-based coalescing did, so the comparison still sees a settled
+  // state. And a Timer is a child of this object, so it is destroyed with it —
+  // where a queued callLater on a bare function reference goes on to evaluate
+  // in a context the shell is already tearing down. Every plugin rebuild is
+  // that window, and there are many.
+  //
+  // The coalescing is the reason this is not a guarded closure like
+  // Panel.qml's scheduleRefresh: a fresh closure per call has no identity to
+  // collapse on, so each binding step would arrive as its own decision.
+  Timer {
+    id: alertConfigTimer
+    interval: 0
+    repeat: false
+    onTriggered: root.syncAlertConfig()
+  }
+
   function applyAlertConfig() {
-    Qt.callLater(syncAlertConfig)
+    alertConfigTimer.restart()
   }
 
   function syncAlertConfig() {
@@ -584,6 +1061,7 @@ Item {
     if (first || (!thresholdMoved && !radiusMoved)) return
 
     notifiedLevel = 0
+    storeLatch(0)
     if (radiusMoved) {
       if (hasLocation && alertsEnabled) checkNow()
     } else {
@@ -595,10 +1073,22 @@ Item {
   onAlertsEnabledChanged: {
     if (!alertsEnabled) {
       notifiedLevel = 0
+      modelLevel = 0
       outlookLevel = 0
+      outlookEvent = ""
       forecastProc.running = false
+      nwsPointsProc.running = false
+      nwsAlertsProc.running = false
+      nwsHourlyProc.running = false
+      nwsOutstanding = 0
+      nwsPending = false
       checking = false
+      // Only a deliberate switch-off clears the stored latch. Settings that
+      // have not arrived yet read as `alertsEnabled` false without meaning it,
+      // and clearing on those would put the repeats straight back.
+      if (settingsReady) storeLatch(0)
     } else if (hasLocation) {
+      adoptLatch()
       checkNow()
     }
   }

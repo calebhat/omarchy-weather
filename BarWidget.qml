@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import qs.Commons
 import qs.Ui
 
@@ -7,13 +8,6 @@ BarWidget {
   moduleName: "io.github.calebhat.weather"
 
   readonly property var radar: bar && bar.shell ? bar.shell.serviceFor("io.github.calebhat.weather") : null
-  readonly property bool showBarTemp: setting("showBarTemp", false) === true
-  readonly property string barTemp: {
-    var p = panelLoader.item
-    if (!p || !p.reportTempNum) return ""
-    return String(p.reportTempNum) + "°"
-  }
-  readonly property bool barTempVisible: showBarTemp && barTemp !== ""
 
   function syncService() {
     if (root.radar && "settings" in root.radar) root.radar.settings = root.settings
@@ -60,16 +54,11 @@ BarWidget {
     if (panelLoader.item) panelLoader.item.closeForPopoutSwitch()
   }
 
-  function handlePress(b) {
-    if (b === Qt.RightButton) {
-      if (panelLoader.item && panelLoader.item.notifyCurrent) panelLoader.item.notifyCurrent()
-    } else if (b === Qt.MiddleButton) root.refresh()
-    else root.togglePanel()
-  }
-
   visible: true
-  implicitWidth: cluster.implicitWidth
-  implicitHeight: cluster.implicitHeight
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
+  readonly property real openPanelIndicatorWidth: weatherContent.implicitWidth
+  readonly property real openPanelIndicatorHeight: weatherContent.implicitHeight
 
   onBarChanged: injectPanel()
   onSettingsChanged: { injectPanel(); syncService() }
@@ -82,44 +71,58 @@ BarWidget {
     visible: false
     onLoaded: {
       root.injectPanel()
-      Qt.callLater(root.injectPanel)
+      // Probed at execution time: a plugin rebuild can begin between the queue
+      // and the call, and a bare reference would evaluate into the widget being
+      // torn down. injectPanel is idempotent, so there is nothing to coalesce.
+      Qt.callLater(function() { if (root && root.injectPanel) root.injectPanel() })
     }
   }
 
-  Row {
-    id: cluster
-    spacing: root.barTempVisible ? -2 : 0
+  WidgetButton {
+    id: button
+    anchors.fill: parent
+    bar: root.bar
+    labelVisible: false
+    hasVisualContent: true
+    fixedWidth: root.vertical ? -1 : weatherContent.implicitWidth + Style.space(12)
+    fixedHeight: root.vertical ? weatherContent.implicitHeight + Style.space(8) : -1
+    tooltipText: "Weather — click forecast, middle refresh, right notify"
 
-    BarIconButton {
-      id: button
-      bar: root.bar
-      text: panelLoader.item ? (panelLoader.item.barLabel || panelLoader.item.label || "") : ""
-      slotSize: Style.bar.statusSlot
-      interactive: false
-      tooltipText: ""
-      // KeyboardPanel's overlay hit-tests registered click targets and calls
-      // triggerPress; the wrapping MouseArea never sees those clicks.
-      onPressed: function(b) { root.handlePress(b) }
+    onPressed: function(b) {
+      if (b === Qt.RightButton) {
+        if (panelLoader.item && panelLoader.item.notifyCurrent) panelLoader.item.notifyCurrent()
+      } else if (b === Qt.MiddleButton) root.refresh()
+      else root.togglePanel()
     }
 
-    Text {
-      visible: root.barTempVisible
-      text: root.barTemp
-      color: root.bar ? root.bar.barForeground : Color.foreground
-      font.family: root.bar ? root.bar.fontFamily : Style.font.family
-      font.pixelSize: Style.font.body
-      renderType: Text.NativeRendering
-      anchors.verticalCenter: parent.verticalCenter
-    }
-  }
+    GridLayout {
+      id: weatherContent
+      anchors.centerIn: parent
+      columns: root.vertical ? 1 : 2
+      rowSpacing: Style.space(1)
+      columnSpacing: Style.space(3)
 
-  MouseArea {
-    anchors.fill: cluster
-    acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
-    hoverEnabled: true
-    cursorShape: Qt.PointingHandCursor
-    onEntered: if (root.bar) root.bar.showTooltip(root, "Weather — click forecast, middle refresh, right notify")
-    onExited: if (root.bar) root.bar.hideTooltip(root)
-    onClicked: function(mouse) { root.handlePress(mouse.button) }
+      Text {
+        Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
+        textFormat: Text.PlainText
+        text: panelLoader.item && panelLoader.item.barTemperatureF !== ""
+          ? panelLoader.item.barTemperatureF + "°F"
+          : "…°F"
+        color: button.foreground
+        font.family: button.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        font.weight: Font.DemiBold
+      }
+
+      Text {
+        Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
+        visible: text !== ""
+        textFormat: Text.PlainText
+        text: panelLoader.item ? panelLoader.item.barConditionGlyph : ""
+        color: button.foreground
+        font.family: button.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+    }
   }
 }
