@@ -29,6 +29,7 @@ Panel {
   readonly property string unitChoice: String(setting("unit", "auto"))
   readonly property bool use12Hour: String(setting("timeFormat", "24")) === "12"
   readonly property bool alertsOn: setting("alertsEnabled", false) === true
+  readonly property bool showBarTemp: setting("showBarTemp", false) === true
 
   function open() {
     openedFromHotkey = false
@@ -1403,7 +1404,7 @@ KeyboardPanel {
                         text: root.iconForOpenMeteoCode(modelData.code, modelData.night)
                         color: root.bar.foreground
                         font.family: root.bar.fontFamily
-                        font.pixelSize: Style.font.title
+                        font.pixelSize: Style.font.display
                       }
                       Text {
                         textFormat: Text.PlainText
@@ -1679,7 +1680,7 @@ KeyboardPanel {
                   Layout.fillWidth: true
                   Layout.minimumWidth: 0
                   clip: true
-                  height: root.metricCellHeight + Style.space(8)
+                  height: root.metricCellHeight + Style.space(32)
                   radius: Math.min(4, Style.cornerRadius)
                   color: modelData.isToday ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.1) : Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.05)
 
@@ -1707,7 +1708,7 @@ KeyboardPanel {
                       text: root.iconForOpenMeteoCode(modelData.code, false)
                       color: root.bar.foreground
                       font.family: root.bar.fontFamily
-                      font.pixelSize: Style.font.body
+                      font.pixelSize: Style.font.heading
                     }
 
                     Text {
@@ -1834,6 +1835,45 @@ KeyboardPanel {
               width: parent.width
               wrapMode: Text.WordWrap
               text: "Open radar on the forecast uses this site. Custom URLs must be https."
+              color: root.dimText
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            PanelSectionHeader {
+              text: "BAR"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+            }
+
+            Item {
+              width: parent.width
+              height: Style.spacing.controlHeight
+
+              Text {
+                textFormat: Text.PlainText
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Show temperature"
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body
+              }
+
+              ToggleSwitch {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                checked: root.showBarTemp
+                foreground: root.bar.foreground
+                onToggled: root.persistSetting("showBarTemp", !root.showBarTemp)
+              }
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "Puts the current temperature next to the bar glyph, at the clock type size. Off keeps the glyph-only pill."
               color: root.dimText
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.bodySmall

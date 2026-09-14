@@ -7,6 +7,13 @@ BarWidget {
   moduleName: "io.github.calebhat.weather"
 
   readonly property var radar: bar && bar.shell ? bar.shell.serviceFor("io.github.calebhat.weather") : null
+  readonly property bool showBarTemp: setting("showBarTemp", false) === true
+  readonly property string barTemp: {
+    var p = panelLoader.item
+    if (!p || !p.reportTempNum) return ""
+    return String(p.reportTempNum) + "°"
+  }
+  readonly property bool barTempVisible: showBarTemp && barTemp !== ""
 
   function syncService() {
     if (root.radar && "settings" in root.radar) root.radar.settings = root.settings
@@ -53,9 +60,16 @@ BarWidget {
     if (panelLoader.item) panelLoader.item.closeForPopoutSwitch()
   }
 
+  function handlePress(b) {
+    if (b === Qt.RightButton) {
+      if (panelLoader.item && panelLoader.item.notifyCurrent) panelLoader.item.notifyCurrent()
+    } else if (b === Qt.MiddleButton) root.refresh()
+    else root.togglePanel()
+  }
+
   visible: true
-  implicitWidth: button.implicitWidth
-  implicitHeight: button.implicitHeight
+  implicitWidth: cluster.implicitWidth
+  implicitHeight: cluster.implicitHeight
 
   onBarChanged: injectPanel()
   onSettingsChanged: { injectPanel(); syncService() }
@@ -72,19 +86,37 @@ BarWidget {
     }
   }
 
-  BarIconButton {
-    id: button
-    anchors.fill: parent
-    bar: root.bar
-    text: panelLoader.item ? (panelLoader.item.barLabel || panelLoader.item.label || "") : ""
-    slotSize: Style.bar.statusSlot
-    tooltipText: "Weather — click forecast, middle refresh, right notify"
+  Row {
+    id: cluster
+    spacing: root.barTempVisible ? -2 : 0
 
-    onPressed: function(b) {
-      if (b === Qt.RightButton) {
-        if (panelLoader.item && panelLoader.item.notifyCurrent) panelLoader.item.notifyCurrent()
-      } else if (b === Qt.MiddleButton) root.refresh()
-      else root.togglePanel()
+    BarIconButton {
+      id: button
+      bar: root.bar
+      text: panelLoader.item ? (panelLoader.item.barLabel || panelLoader.item.label || "") : ""
+      slotSize: Style.bar.statusSlot
+      interactive: false
+      tooltipText: ""
     }
+
+    Text {
+      visible: root.barTempVisible
+      text: root.barTemp
+      color: root.bar ? root.bar.barForeground : Color.foreground
+      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+      font.pixelSize: Style.font.body
+      renderType: Text.NativeRendering
+      anchors.verticalCenter: parent.verticalCenter
+    }
+  }
+
+  MouseArea {
+    anchors.fill: cluster
+    acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+    hoverEnabled: true
+    cursorShape: Qt.PointingHandCursor
+    onEntered: if (root.bar) root.bar.showTooltip(root, "Weather — click forecast, middle refresh, right notify")
+    onExited: if (root.bar) root.bar.hideTooltip(root)
+    onClicked: function(mouse) { root.handlePress(mouse.button) }
   }
 }
