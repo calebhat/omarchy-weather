@@ -101,6 +101,7 @@ class ForecastOrbitTests(unittest.TestCase):
 
     def test_loading_state_uses_the_morphing_canvas(self):
         self.assertIn("MorphingWeatherLoader {", PANEL)
+        self.assertIn("running: root.forecastOrbit && !root.weatherUnavailable", PANEL)
         self.assertIn("Canvas {", LOADER)
         self.assertIn("quadraticCurveTo", LOADER)
         self.assertIn("loops: Animation.Infinite", LOADER)

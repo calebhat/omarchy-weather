@@ -2006,7 +2006,7 @@ KeyboardPanel {
               height: Style.space(22)
               anchors.verticalCenter: parent.verticalCenter
               accentColor: root.weatherAccent
-              running: !root.weatherUnavailable
+              running: root.forecastOrbit && !root.weatherUnavailable
               visible: running
             }
 
