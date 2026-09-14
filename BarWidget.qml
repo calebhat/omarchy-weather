@@ -97,6 +97,9 @@ BarWidget {
       slotSize: Style.bar.statusSlot
       interactive: false
       tooltipText: ""
+      // KeyboardPanel's overlay hit-tests registered click targets and calls
+      // triggerPress; the wrapping MouseArea never sees those clicks.
+      onPressed: function(b) { root.handlePress(b) }
     }
 
     Text {
