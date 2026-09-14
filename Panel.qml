@@ -240,7 +240,10 @@ Panel {
   readonly property bool showSun: setting("showSun", true) !== false
   readonly property bool showForecast: setting("showForecast", true) !== false
   readonly property bool showFeelsLike: setting("showFeelsLike", true) !== false
+  readonly property bool forecastOrbit: setting("forecastOrbit", false) === true
   readonly property bool orbitAutoSpin: setting("orbitAutoSpin", true) !== false
+
+  onForecastOrbitChanged: if (forecastOrbit && opened) resetCarousel(true)
 
   readonly property string reportLocation: peeking ? peekName : (configuredLocation || wttrLocation || (areaInfo && areaInfo.areaName && areaInfo.areaName[0] ? areaInfo.areaName[0].value : ""))
   readonly property string reportTempNum: current ? String(useImperial ? current.temp_F : current.temp_C) : ""
@@ -869,6 +872,7 @@ Panel {
     repeat: true
     running: root.opened
       && root.mainView === "forecast"
+      && root.forecastOrbit
       && root.carouselCount > 1
       && root.orbitAutoSpin
     onTriggered: {
@@ -1515,7 +1519,7 @@ KeyboardPanel {
       blocked: root.editingLocation
       onMoveRequested: function(dx, dy) {
         if (root.mainView !== "forecast") return
-        if (dx !== 0 && root.carouselCount > 1) {
+        if (dx !== 0 && root.forecastOrbit && root.carouselCount > 1) {
           root.stepCarousel(dx)
           return
         }
@@ -2023,7 +2027,7 @@ KeyboardPanel {
           // opacity, tilt, and z-order make the front position feel physical.
           Column {
             id: carouselSection
-            visible: root.mainView === "forecast" && root.showForecast && root.carouselCount > 0
+            visible: root.mainView === "forecast" && root.showForecast && root.forecastOrbit && root.carouselCount > 0
             width: parent.width
             spacing: Style.space(8)
 
@@ -2624,6 +2628,89 @@ KeyboardPanel {
             }
           }
 
+          // ---- 10-DAY FORECAST --------------------------------------------
+          Column {
+            id: forecastStrip
+            visible: root.mainView === "forecast" && root.showForecast && !root.forecastOrbit && root.daily.length > 0
+            width: parent.width
+            spacing: Style.space(8)
+
+            PanelSectionHeader {
+              text: "10-DAY FORECAST"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+            }
+
+            RowLayout {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Repeater {
+                model: root.daily
+
+                Rectangle {
+                  required property var modelData
+                  Layout.fillWidth: true
+                  Layout.minimumWidth: 0
+                  clip: true
+                  height: root.metricCellHeight + Style.space(32)
+                  radius: Math.min(4, Style.cornerRadius)
+                  color: modelData.isToday ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.1) : Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.05)
+
+                  Column {
+                    width: parent.width
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(2)
+
+                    Text {
+                      textFormat: Text.PlainText
+                      width: parent.width
+                      horizontalAlignment: Text.AlignHCenter
+                      elide: Text.ElideRight
+                      text: root.dayAbbr(modelData.date).toUpperCase()
+                      color: modelData.isToday ? root.bar.foreground : root.dimText
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: modelData.isToday
+                    }
+
+                    Text {
+                      textFormat: Text.PlainText
+                      width: parent.width
+                      horizontalAlignment: Text.AlignHCenter
+                      text: root.iconForOpenMeteoCode(modelData.code, false)
+                      color: root.bar.foreground
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.heading
+                    }
+
+                    Text {
+                      textFormat: Text.PlainText
+                      width: parent.width
+                      horizontalAlignment: Text.AlignHCenter
+                      elide: Text.ElideRight
+                      text: root.bareTempForDay(modelData, "max")
+                      color: root.bar.foreground
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+
+                    Text {
+                      textFormat: Text.PlainText
+                      width: parent.width
+                      horizontalAlignment: Text.AlignHCenter
+                      elide: Text.ElideRight
+                      text: root.bareTempForDay(modelData, "min")
+                      color: root.dimText
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+                  }
+                }
+              }
+            }
+          }
+
           // ---- HOURLY ----------------------------------------------------------
           PanelSeparator {
             strength: 0.2
@@ -3216,12 +3303,46 @@ KeyboardPanel {
             }
 
             PanelSectionHeader {
-              text: "FORECAST ORBIT"
+              text: "FORECAST"
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
             }
 
             Item {
+              width: parent.width
+              height: Style.spacing.controlHeight
+
+              Text {
+                textFormat: Text.PlainText
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Orbital forecast"
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body
+              }
+
+              ToggleSwitch {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                checked: root.forecastOrbit
+                foreground: root.bar.foreground
+                onToggled: root.persistSetting("forecastOrbit", !root.forecastOrbit)
+              }
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "Replaces the compact ten-day strip with a mouse-spinnable orbit. Off keeps the original layout."
+              color: root.dimText
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Item {
+              visible: root.forecastOrbit
               width: parent.width
               height: Style.spacing.controlHeight
 

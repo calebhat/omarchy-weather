@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.calebhat.weather",
   "name": "Detailed Weather",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "author": "calebhat",
   "license": "MIT",
   "description": "Detailed weather with an interactive orbital ten-day forecast, remaining-hour outlook, city peek, and Open radar in the default browser.",
@@ -31,6 +31,7 @@
       "showSun": true,
       "showFeelsLike": true,
       "showBarTemp": false,
+      "forecastOrbit": false,
       "orbitAutoSpin": true,
       "alertsEnabled": false,
       "alertRadiusKm": 100,
@@ -102,11 +103,18 @@
         "description": "Current temperature next to the condition glyph, using the same type size as the clock."
       },
       {
+        "key": "forecastOrbit",
+        "type": "boolean",
+        "label": "Orbital ten-day forecast",
+        "defaultValue": false,
+        "description": "Replace the compact ten-day strip with a mouse-spinnable orbit. Off keeps the original layout."
+      },
+      {
         "key": "orbitAutoSpin",
         "type": "boolean",
         "label": "Auto-spin forecast orbit",
         "defaultValue": true,
-        "description": "Advance the orbital day carousel after 6.5 seconds without interaction. Pauses while the pointer is over it."
+        "description": "Advance the orbital day carousel after 6.5 seconds without interaction. Pauses while the pointer is over it. Only applies when the orbital forecast is on."
       },
       {
         "key": "alertsEnabled",

@@ -1,8 +1,8 @@
 # Detailed Weather
 
 A single Omarchy bar pill that **replaces** the built-in `omarchy.weather`
-widget. Click it for today's remaining-hour forecast and a mouse-spinnable
-ten-day weather orbit.
+widget. Click it for today's remaining-hour forecast and a ten-day outlook
+(compact strip by default; optional mouse-spinnable orbit).
 **Open radar** launches a saved radar website in your default browser.
 
 Named to sit next to stock Weather, Weathering, and Weather Radar without
@@ -58,12 +58,13 @@ rising mark, while cooling flashes ice-blue with a falling mark. Below that:
 - **Metrics** — wind (speed and direction), humidity, pressure, UV, air
   quality (US AQI, PM2.5 / PM10), sunrise and sunset. Each block can be
   hidden in settings.
-- **Forecast orbit** — today plus the next nine days circle a live detail
-  hub. Drag or flick with the mouse, scroll the wheel, click any day, or use
-  Left/Right (also `h`/`l`) to spin it. Depth, tilt, opacity, momentum, and a
+- **Ten-day forecast** — compact strip of today plus the next nine days
+  (default). Settings → **Orbital forecast** swaps that for a mouse-spinnable
+  orbit around a live detail hub. Drag or flick, scroll the wheel, click any
+  day, or use Left/Right (also `h`/`l`). Depth, tilt, opacity, momentum, and a
   spring snap make the ring feel physical. The center and four detail cells
   update with condition, high/low, precipitation, UV, sunrise, and sunset.
-  It advances after 6.5 seconds idle by default and pauses under the pointer.
+  Auto-spin advances after 6.5 seconds idle and pauses under the pointer.
   Condition-reactive ambient color and a drifting ghost glyph follow the
   selected day; cards lean into velocity, rain becomes a liquid wave gauge,
   and thunderstorm days carry an urgent breathing edge. A soft energy core of
@@ -172,12 +173,13 @@ the bar settings form). `shell.json` hot-reloads on save.
 | `unit` | `auto` | `auto` / `metric` / `imperial` |
 | `refreshMinutes` | `15` | Forecast refresh, 5–120 |
 | `showHourly` | `true` | Remaining hours for today |
-| `showForecast` | `true` | Ten-day strip |
+| `showForecast` | `true` | Ten-day outlook |
 | `showMetrics` | `true` | Wind / humidity / pressure / UV grid |
 | `showSun` | `true` | Sunrise / sunset cell |
 | `showAirQuality` | `true` | US AQI cell |
 | `showFeelsLike` | `true` | Feels-like in the header |
 | `showBarTemp` | `false` | Current temperature next to the bar glyph |
+| `forecastOrbit` | `false` | Orbital ten-day forecast instead of the compact strip |
 | `orbitAutoSpin` | `true` | Advance the day orbit after 6.5 seconds idle |
 | `alertsEnabled` | `false` | Storm alerts for home |
 | `alertRadiusKm` | `100` | How far around home to sample |

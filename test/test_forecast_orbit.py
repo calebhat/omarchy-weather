@@ -37,7 +37,7 @@ class ForecastOrbitTests(unittest.TestCase):
             self.assertIn(contract, BAR_WIDGET)
 
         self.assertIn("bar temperature is always Fahrenheit", README)
-        self.assertEqual(MANIFEST["version"], "1.3.1")
+        self.assertEqual(MANIFEST["version"], "1.3.2")
 
     def test_hot_reload_bar_teardown_has_fallback(self):
         for contract in (
@@ -69,11 +69,18 @@ class ForecastOrbitTests(unittest.TestCase):
         )
         self.assertIn("model: root.daily", PANEL)
 
-    def test_auto_spin_setting_is_wired_and_documented(self):
+    def test_orbit_is_opt_in_and_auto_spin_is_wired(self):
         defaults = MANIFEST["barWidget"]["defaults"]
         schema = {
             entry["key"]: entry for entry in MANIFEST["barWidget"]["schema"]
         }
+        self.assertIs(defaults["forecastOrbit"], False)
+        self.assertEqual(schema["forecastOrbit"]["type"], "boolean")
+        self.assertIn('setting("forecastOrbit", false)', PANEL)
+        self.assertIn("id: forecastStrip", PANEL)
+        self.assertIn("!root.forecastOrbit", PANEL)
+        self.assertIn("root.forecastOrbit && root.carouselCount > 0", PANEL)
+        self.assertIn("forecastOrbit", README)
         self.assertIs(defaults["orbitAutoSpin"], True)
         self.assertEqual(schema["orbitAutoSpin"]["type"], "boolean")
         self.assertIn('setting("orbitAutoSpin", true)', PANEL)
