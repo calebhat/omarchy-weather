@@ -22,5 +22,5 @@ history and forecast tiles.
 
 Commit as `calebhat <97716470+calebhat@users.noreply.github.com>`.
 
-Marketplace listing: [issue #1265](https://github.com/HANCORE-linux/omarchy-plugin-marketplace/issues/1265).
-Edit that issue to revalidate. Do not open a duplicate.
+Marketplace listing: [issue #1265](https://github.com/omacom/omarchy-plugin-marketplace/issues/1265).
+To ship a new snapshot, open a `[Verify]` issue (newer upstream commit) against `omacom/omarchy-plugin-marketplace`. Do not open a duplicate `[Plugin]` submission.
