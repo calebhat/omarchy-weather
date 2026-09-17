@@ -197,13 +197,17 @@ Panel {
   property string homeLabel: ""
   readonly property string barLabel: homeLabel || label
   property string homeTempF: ""
+  property string homeTempC: ""
   readonly property string barTemperatureF: homeTempF
+  readonly property string barTemperatureC: homeTempC
+  readonly property string barTemperature: useImperial ? homeTempF : homeTempC
+  readonly property string barTempUnit: "°" + (useImperial ? "F" : "C")
   readonly property string barConditionGlyph: homeLabel || label
 
-  // The forecast panel can follow the user's unit preference, but the compact
-  // outside-temperature readout in the bar is intentionally always Fahrenheit.
-  // Keep its value paired with the saved home's icon so peeking at another city
-  // cannot quietly replace either half of the bar reading.
+  // The bar follows the saved unit setting (auto/metric/imperial), like the
+  // rest of the panel. Keep its value paired with the saved home's icon so
+  // peeking at another city cannot quietly replace either half of the bar
+  // reading.
   function rememberHomeCurrent(currentCondition, provisionalIcon) {
     if (root.peeking || !currentCondition) return
 
@@ -217,6 +221,9 @@ Panel {
 
     var nextTempF = Model.roundedTemp(currentCondition.temp_F)
     if (nextTempF !== "") root.homeTempF = nextTempF
+
+    var nextTempC = Model.roundedTemp(currentCondition.temp_C)
+    if (nextTempC !== "") root.homeTempC = nextTempC
   }
 
   // wttr's current conditions when available; open-meteo's (bundled with the

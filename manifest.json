@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.calebhat.weather",
   "name": "Detailed Weather",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "author": "calebhat",
   "license": "MIT",
   "description": "Detailed weather with an interactive orbital ten-day forecast, remaining-hour outlook, city peek, and Open radar in the default browser.",

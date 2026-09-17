@@ -17,27 +17,37 @@ MANIFEST = json.loads((PLUGIN / "manifest.json").read_text(encoding="utf-8"))
 
 
 class ForecastOrbitTests(unittest.TestCase):
-    def test_bar_shows_saved_home_temperature_in_fahrenheit_with_small_condition(self):
+    def test_bar_respects_the_unit_setting_and_show_bar_temp(self):
         for contract in (
             'property string homeTempF: ""',
+            'property string homeTempC: ""',
             "readonly property string barTemperatureF: homeTempF",
+            "readonly property string barTemperatureC: homeTempC",
+            "readonly property string barTemperature: useImperial ? homeTempF : homeTempC",
+            'readonly property string barTempUnit: "°" + (useImperial ? "F" : "C")',
             "readonly property string barConditionGlyph: homeLabel || label",
             "function rememberHomeCurrent(currentCondition, provisionalIcon)",
             "Model.roundedTemp(currentCondition.temp_F)",
+            "Model.roundedTemp(currentCondition.temp_C)",
         ):
             self.assertIn(contract, PANEL)
 
         for contract in (
             "WidgetButton {",
-            'panelLoader.item.barTemperatureF + "°F"',
+            'readonly property bool showBarTemp: root.settings && root.settings["showBarTemp"] === true',
+            "visible: root.showBarTemp",
+            "panelLoader.item.barTemperature + panelLoader.item.barTempUnit",
             "font.pixelSize: Style.font.bodySmall",
             "text: panelLoader.item ? panelLoader.item.barConditionGlyph",
             "font.pixelSize: Style.font.caption",
         ):
             self.assertIn(contract, BAR_WIDGET)
+        self.assertNotIn('barTemperatureF + "°F"', BAR_WIDGET)
 
-        self.assertIn("bar temperature is always Fahrenheit", README)
-        self.assertEqual(MANIFEST["version"], "1.3.2")
+        self.assertNotIn("always Fahrenheit", README)
+        defaults = MANIFEST["barWidget"]["defaults"]
+        self.assertIs(defaults["showBarTemp"], False)
+        self.assertEqual(MANIFEST["version"], "1.3.3")
 
     def test_hot_reload_bar_teardown_has_fallback(self):
         for contract in (
