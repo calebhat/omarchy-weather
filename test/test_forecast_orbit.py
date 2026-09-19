@@ -24,7 +24,7 @@ class ForecastOrbitTests(unittest.TestCase):
             "readonly property string barTemperatureF: homeTempF",
             "readonly property string barTemperatureC: homeTempC",
             "readonly property string barTemperature: useImperial ? homeTempF : homeTempC",
-            'readonly property string barTempUnit: "°" + (useImperial ? "F" : "C")',
+            'readonly property string barTempUnit: useImperial ? "°F" : "°C"',
             "readonly property string barConditionGlyph: homeLabel || label",
             "function rememberHomeCurrent(currentCondition, provisionalIcon)",
             "Model.roundedTemp(currentCondition.temp_F)",
@@ -36,7 +36,8 @@ class ForecastOrbitTests(unittest.TestCase):
             "WidgetButton {",
             'readonly property bool showBarTemp: root.settings && root.settings["showBarTemp"] === true',
             "visible: root.showBarTemp",
-            "panelLoader.item.barTemperature + panelLoader.item.barTempUnit",
+            "panelLoader.item.barTemperature",
+            "panelLoader.item.barTempUnit",
             "font.pixelSize: Style.font.bodySmall",
             "text: panelLoader.item ? panelLoader.item.barConditionGlyph",
             "font.pixelSize: Style.font.caption",
@@ -44,6 +45,7 @@ class ForecastOrbitTests(unittest.TestCase):
             self.assertIn(contract, BAR_WIDGET)
         self.assertNotIn('barTemperatureF + "°F"', BAR_WIDGET)
 
+        self.assertIn("same **°C** / **°F** units as the", README)
         self.assertNotIn("always Fahrenheit", README)
         defaults = MANIFEST["barWidget"]["defaults"]
         self.assertIs(defaults["showBarTemp"], False)

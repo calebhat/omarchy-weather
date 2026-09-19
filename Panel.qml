@@ -200,14 +200,12 @@ Panel {
   property string homeTempC: ""
   readonly property string barTemperatureF: homeTempF
   readonly property string barTemperatureC: homeTempC
-  readonly property string barTemperature: useImperial ? homeTempF : homeTempC
-  readonly property string barTempUnit: "°" + (useImperial ? "F" : "C")
   readonly property string barConditionGlyph: homeLabel || label
 
   // The bar follows the saved unit setting (auto/metric/imperial), like the
-  // rest of the panel. Keep its value paired with the saved home's icon so
-  // peeking at another city cannot quietly replace either half of the bar
-  // reading.
+  // rest of the panel. Keep both home °F and °C paired with the saved home's
+  // icon so peeking at another city cannot quietly replace either half of the
+  // bar reading. The compact readout picks via useImperial below.
   function rememberHomeCurrent(currentCondition, provisionalIcon) {
     if (root.peeking || !currentCondition) return
 
@@ -220,9 +218,8 @@ Panel {
     }
 
     var nextTempF = Model.roundedTemp(currentCondition.temp_F)
-    if (nextTempF !== "") root.homeTempF = nextTempF
-
     var nextTempC = Model.roundedTemp(currentCondition.temp_C)
+    if (nextTempF !== "") root.homeTempF = nextTempF
     if (nextTempC !== "") root.homeTempC = nextTempC
   }
 
@@ -236,6 +233,8 @@ Panel {
   readonly property string reportCountry: areaInfo && areaInfo.country && areaInfo.country[0] ? areaInfo.country[0].value : ""
 
   readonly property bool useImperial: Model.shouldUseImperial(setting("unit", ""), Qt.locale().name, reportCountry)
+  readonly property string barTemperature: useImperial ? homeTempF : homeTempC
+  readonly property string barTempUnit: useImperial ? "°F" : "°C"
 
   // Auto-refresh interval in minutes; clamped to a sane minimum.
   readonly property int refreshMinutes: Math.max(5, parseInt(setting("refreshMinutes", 15), 10) || 15)

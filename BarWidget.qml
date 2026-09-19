@@ -112,9 +112,12 @@ BarWidget {
         Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
         textFormat: Text.PlainText
         visible: root.showBarTemp
-        text: panelLoader.item && panelLoader.item.barTemperature !== ""
-          ? panelLoader.item.barTemperature + panelLoader.item.barTempUnit
-          : "…"
+        text: {
+          var unit = panelLoader.item ? panelLoader.item.barTempUnit : "°F"
+          if (panelLoader.item && panelLoader.item.barTemperature !== "")
+            return panelLoader.item.barTemperature + unit
+          return "…" + unit
+        }
         color: button.foreground
         font.family: button.fontFamily
         font.pixelSize: Style.font.bodySmall
