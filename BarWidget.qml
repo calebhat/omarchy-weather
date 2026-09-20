@@ -9,6 +9,12 @@ BarWidget {
 
   readonly property var radar: bar && bar.shell ? bar.shell.serviceFor("io.github.calebhat.weather") : null
 
+  // Whether the pill shows the temperature text next to the glyph. The
+  // manifest default is off, and settings arrive after the widget is created
+  // (empty object first), so an empty settings object correctly reads as
+  // hidden rather than unknown.
+  readonly property bool showBarTemp: root.settings && root.settings["showBarTemp"] === true
+
   function syncService() {
     if (root.radar && "settings" in root.radar) root.radar.settings = root.settings
   }
@@ -105,9 +111,10 @@ BarWidget {
       Text {
         Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
         textFormat: Text.PlainText
-        text: panelLoader.item && panelLoader.item.barTemperatureF !== ""
-          ? panelLoader.item.barTemperatureF + "°F"
-          : "…°F"
+        visible: root.showBarTemp
+        text: panelLoader.item && panelLoader.item.barTemperature !== ""
+          ? panelLoader.item.barTemperature + panelLoader.item.barTempUnit
+          : "…"
         color: button.foreground
         font.family: button.fontFamily
         font.pixelSize: Style.font.bodySmall
