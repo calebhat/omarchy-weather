@@ -47,7 +47,7 @@
         "label": "Units",
         "options": ["auto", "metric", "imperial"],
         "defaultValue": "auto",
-        "description": "Temperature and wind units. Auto follows your locale and country."
+        "description": "Temperature and wind units for the panel and the bar pill. Auto follows your locale and country."
       },
       {
         "key": "refreshMinutes",
