@@ -113,6 +113,34 @@ test("a missing probability is skipped rather than counted as zero", () => {
   assert.equal(RadarModel.nwsMaxPop(grid, 2), 65)
 })
 
+test("an all-null window returns -1", () => {
+  const grid = { properties: { periods: [
+    { probabilityOfPrecipitation: { value: null } },
+    { probabilityOfPrecipitation: { value: null } },
+  ] } }
+  assert.equal(RadarModel.nwsMaxPop(grid, 2), -1)
+})
+
+test("a window of nulls plus one 65 returns 65", () => {
+  const grid = { properties: { periods: [
+    { probabilityOfPrecipitation: { value: null } },
+    { probabilityOfPrecipitation: { value: null } },
+    { probabilityOfPrecipitation: { value: 65 } },
+  ] } }
+  assert.equal(RadarModel.nwsMaxPop(grid, 3), 65)
+})
+
+test("an all-null window passed through corroborate keeps Severe with model source", () => {
+  const grid = { properties: { periods: [
+    { probabilityOfPrecipitation: { value: null } },
+    { probabilityOfPrecipitation: { value: null } },
+  ] } }
+  const maxPop = RadarModel.nwsMaxPop(grid, 2)
+  const verdict = RadarModel.corroborate(SEVERE, covered({ maxPop: maxPop }))
+  assert.equal(verdict.level, SEVERE)
+  assert.equal(verdict.source, "model")
+})
+
 test("no periods means no opinion, which is not zero", () => {
   assert.equal(RadarModel.nwsMaxPop({ properties: { periods: [] } }, 2), -1)
   assert.equal(RadarModel.nwsMaxPop(null, 2), -1)

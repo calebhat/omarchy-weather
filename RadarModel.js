@@ -327,8 +327,8 @@ function nwsMaxPop(data, hours) {
   var highest = -1
   for (var i = 0; i < span; i++) {
     var slot = periods[i] ? periods[i].probabilityOfPrecipitation : null
-    var value = slot ? Number(slot.value) : NaN
-    if (!isFinite(value)) continue
+    var value = slot ? slot.value : null
+    if (typeof value !== "number" || !isFinite(value)) continue
     if (value > highest) highest = value
   }
   return highest
