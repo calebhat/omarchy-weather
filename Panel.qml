@@ -2533,7 +2533,8 @@ KeyboardPanel {
                     kind: "liquid",
                     level: root.carouselDay.precipProb !== "" && isFinite(Number(root.carouselDay.precipProb))
                       ? Number(root.carouselDay.precipProb) / 100
-                      : -1
+                      : -1,
+                    detail: Model.formatPrecipAmount(root.carouselDay.precipMm, root.useImperial)
                   },
                   { label: "UV", value: root.carouselUv ? root.carouselUv.label : "—", kind: "text", level: -1 },
                   { label: "SUNRISE", value: root.carouselDay.sunrise ? Model.formatClock(root.carouselDay.sunrise, root.use12Hour) : "—", kind: "text", level: -1 },
@@ -2547,7 +2548,7 @@ KeyboardPanel {
                     ? Math.max(0, Math.min(1, Number(modelData.level)))
                     : 0
                   width: (carouselSection.width - Style.space(18)) / 4
-                  height: Style.space(46)
+                  height: Style.space(58)
                   radius: Math.min(Style.space(8), Style.cornerRadius)
                   color: Util.alpha(root.bar.foreground, 0.045)
                   border.width: Math.max(1, Style.space(1))
@@ -2629,6 +2630,18 @@ KeyboardPanel {
                       font.family: root.bar.fontFamily
                       font.pixelSize: Style.font.bodySmall
                       font.bold: true
+                    }
+
+                    Text {
+                      textFormat: Text.PlainText
+                      width: parent.width
+                      horizontalAlignment: Text.AlignHCenter
+                      elide: Text.ElideRight
+                      visible: text !== ""
+                      text: modelData.detail || ""
+                      color: root.dimText
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.caption
                     }
                   }
                 }

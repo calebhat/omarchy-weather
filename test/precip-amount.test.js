@@ -61,3 +61,10 @@ test("metric amounts are millimetres", () => {
   assert.equal(Model.formatPrecipAmount(12.66, false), "12.7mm")
   assert.equal(Model.formatPrecipAmount(123.4, false), "123mm")
 })
+
+test("malformed or negative amounts are unknown, never dry", () => {
+  for (const bad of [false, true, [], [1], {}, "", "0", -1, NaN, Infinity]) {
+    assert.equal(Model.amountMm([bad], 0), null, `amountMm(${JSON.stringify(bad)})`)
+    assert.equal(Model.formatPrecipAmount(bad, false), "—", `format(${JSON.stringify(bad)})`)
+  }
+})

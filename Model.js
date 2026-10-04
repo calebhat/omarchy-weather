@@ -385,21 +385,20 @@ function hourlyMaxTemp(hourly, useImperial) {
 
 // Rain amount at index i of an Open-Meteo millimetre series. Null when the
 // series or value is absent, so a missing amount never reads as a dry hour.
+function validAmountMm(v) {
+  return typeof v === "number" && isFinite(v) && v >= 0 ? v : null
+}
+
 function amountMm(series, i) {
-  if (!series) return null
-  var v = series[i]
-  if (v === null || v === undefined || v === "") return null
-  var n = Number(v)
-  return isFinite(n) ? n : null
+  return series && typeof series === "object" ? validAmountMm(series[i]) : null
 }
 
 // Rain amount for a narrow cell: inches with the inch mark, or millimetres.
 // Amounts below the display step read "<0.01\"" / "<0.1mm" rather than 0.
 function formatPrecipAmount(mm, useImperial) {
-  if (mm === null || mm === undefined || mm === "") return "—"
-  var n = Number(mm)
-  if (!isFinite(n)) return "—"
-  if (n <= 0) return useImperial ? "0\"" : "0mm"
+  var n = validAmountMm(mm)
+  if (n === null) return "—"
+  if (n === 0) return useImperial ? "0\"" : "0mm"
   if (useImperial) {
     var inches = n / 25.4
     if (inches < 0.005) return "<0.01\""
