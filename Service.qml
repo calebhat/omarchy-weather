@@ -330,7 +330,7 @@ Item {
   function summarizePoint(entry, peakCape, peakGust) {
     if (!entry || !entry.minutely_15) return null
 
-    var precipitation = entry.minutely_15.precipitation || []
+    var precipitation = Array.isArray(entry.minutely_15.precipitation) ? entry.minutely_15.precipitation : []
     var times = entry.minutely_15.time || []
 
     var level = 0
@@ -361,7 +361,7 @@ Item {
 
   function peakOf(series) {
     var highest = 0
-    if (!series) return highest
+    if (!Array.isArray(series)) return highest
     for (var i = 0; i < series.length; i++) highest = Math.max(highest, Number(series[i]) || 0)
     return highest
   }

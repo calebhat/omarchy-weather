@@ -35,7 +35,7 @@ function isoLocalToEpoch(iso, offsetSec) {
 // Upcoming 15-minute precipitation at this location (Open-Meteo).
 function minutelyPrecipForecast(report, horizonSec) {
   var m = report && report.minutely_15
-  if (!m || !m.time) return []
+  if (!m || !Array.isArray(m.time)) return []
   var nowEpoch = Math.floor(Date.now() / 1000)
   var horizon = parseInt(horizonSec, 10)
   if (!isFinite(horizon) || horizon < 1) horizon = 7200
@@ -108,7 +108,7 @@ function parseGeocodingResults(raw) {
   try {
     var data = JSON.parse(String(raw || "{}"))
     var results = data.results
-    if (!results || !results.length) return []
+    if (!Array.isArray(results)) return []
 
     var out = []
     for (var i = 0; i < results.length; i++) {
@@ -205,7 +205,7 @@ function dayName(dateString, formatter) {
 
 function openMeteoForecastDays(dailyForecastReport, todayString) {
   var daily = dailyForecastReport && dailyForecastReport.daily ? dailyForecastReport.daily : null
-  if (!daily || !daily.time) return []
+  if (!daily || !Array.isArray(daily.time)) return []
 
   var result = []
   for (var i = 0; i < daily.time.length && result.length < 3; ++i) {
@@ -387,7 +387,7 @@ function hourlyMaxTemp(hourly, useImperial) {
 // Each entry: time, tempC/tempF, precipProb, code, night.
 function hourlyForecastToday(report, nowIso) {
   var hourly = report && report.hourly ? report.hourly : null
-  if (!hourly || !hourly.time) return []
+  if (!hourly || !Array.isArray(hourly.time)) return []
 
   var now = String(nowIso || "")
   var today = now.length >= 10 ? now.slice(0, 10) : ""
@@ -416,7 +416,7 @@ function hourlyForecastToday(report, nowIso) {
 // carries hourly fields). Each entry: time, tempC/tempF, precipProb, code, night.
 function hourlyForecast(report, nowIso) {
   var hourly = report && report.hourly ? report.hourly : null
-  if (!hourly || !hourly.time) return []
+  if (!hourly || !Array.isArray(hourly.time)) return []
 
   var now = String(nowIso || "")
   var out = []
@@ -439,7 +439,7 @@ function hourlyForecast(report, nowIso) {
 // Daily forecast (today + following days) from the daily-forecast report.
 function dailyForecast(report, todayString, maxDays) {
   var daily = report && report.daily ? report.daily : null
-  if (!daily || !daily.time) return []
+  if (!daily || !Array.isArray(daily.time)) return []
 
   var limit = parseInt(maxDays, 10)
   if (!isFinite(limit) || limit < 1) limit = 5
@@ -511,7 +511,7 @@ function weatherResponseCompletesSave(hasConfiguredCoordinates, source) {
 }
 
 function wttrNextForecastDays(report, todayString) {
-  var days = report && report.weather ? report.weather : []
+  var days = report && Array.isArray(report.weather) ? report.weather : []
   var result = []
   for (var i = 0; i < days.length && result.length < 3; ++i) {
     if (isFutureForecastDate(days[i].date, todayString)) result.push(days[i])
@@ -545,7 +545,7 @@ function dayIcon(day) {
   if (!day) return ""
   if (day.openMeteoWeatherCode !== undefined && day.openMeteoWeatherCode !== null)
     return iconForOpenMeteoCode(day.openMeteoWeatherCode)
-  if (!day.hourly || day.hourly.length === 0) return ""
+  if (!Array.isArray(day.hourly) || day.hourly.length === 0) return ""
 
   var best = day.hourly[0]
   var bestDist = 9999

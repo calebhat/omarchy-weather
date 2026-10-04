@@ -301,7 +301,7 @@ function nwsEventLevel(event) {
 
 // The worst precipitation alert currently in force over the point, and its name.
 function nwsAlertOutlook(data) {
-  var features = data && data.features ? data.features : []
+  var features = data && Array.isArray(data.features) ? data.features : []
   var level = 0
   var event = ""
   for (var i = 0; i < features.length; i++) {
@@ -321,7 +321,7 @@ function nwsAlertOutlook(data) {
 // than as a forecast of nothing — the distinction the whole gate turns on.
 function nwsMaxPop(data, hours) {
   var periods = data && data.properties ? data.properties.periods : null
-  if (!periods || periods.length === 0) return -1
+  if (!Array.isArray(periods) || periods.length === 0) return -1
 
   var span = Math.max(1, Math.min(periods.length, Math.ceil(Number(hours) || 1)))
   var highest = -1
