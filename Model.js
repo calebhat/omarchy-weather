@@ -370,6 +370,13 @@ function pressureLabel(p) {
   return "High"
 }
 
+// The panel's own guard in notifyCurrent drops a description that starts with
+// "-", so a negative reading would never notify. U+2212 is the real minus sign.
+function notificationTemp(text) {
+  var s = String(text || "")
+  return s.charAt(0) === "-" ? "\u2212" + s.slice(1) : s
+}
+
 // Highest temperature (metric or imperial) across the hourly window, as a
 // display string ("24°") for the "Day Max" header.
 function hourlyMaxTemp(hourly, useImperial) {
@@ -628,6 +635,7 @@ if (typeof module !== "undefined") {
     conditionLabel: conditionLabel,
     humidityLabel: humidityLabel,
     pressureLabel: pressureLabel,
+    notificationTemp: notificationTemp,
     hourlyMaxTemp: hourlyMaxTemp,
     uvInfo: uvInfo,
     aqiInfo: aqiInfo,
