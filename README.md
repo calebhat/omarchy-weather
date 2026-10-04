@@ -55,12 +55,13 @@ rising mark, while cooling flashes ice-blue with a falling mark. Below that:
 - **Today** — remaining hours of the current local day (not a fixed six-cell
   strip). When only a few hours remain, their cards expand evenly across the
   full row with symmetric edges; scroll sideways when the day is long. The
-  first cell is **NOW**.
+  first cell is **NOW**. Each hour shows its chance of rain and the forecast
+  amount (inches with imperial units, millimetres otherwise).
 - **Metrics** — wind (speed and direction), humidity, pressure, UV, air
   quality (US AQI, PM2.5 / PM10), sunrise and sunset. Each block can be
   hidden in settings.
 - **Ten-day forecast** — compact strip of today plus the next nine days
-  (default). Settings → **Orbital forecast** swaps that for a mouse-spinnable
+  (default), each with its forecast rain total. Settings → **Orbital forecast** swaps that for a mouse-spinnable
   orbit around a live detail hub. Drag or flick, scroll the wheel, click any
   day, or use Left/Right (also `h`/`l`). Depth, tilt, opacity, momentum, and a
   spring snap make the ring feel physical. The center and four detail cells

@@ -383,6 +383,31 @@ function hourlyMaxTemp(hourly, useImperial) {
   return max === null ? "" : Math.round(max) + "°"
 }
 
+// Rain amount at index i of an Open-Meteo millimetre series. Null when the
+// series or value is absent, so a missing amount never reads as a dry hour.
+function validAmountMm(v) {
+  return typeof v === "number" && isFinite(v) && v >= 0 ? v : null
+}
+
+function amountMm(series, i) {
+  return series && typeof series === "object" ? validAmountMm(series[i]) : null
+}
+
+// Rain amount for a narrow cell: inches with the inch mark, or millimetres.
+// Amounts below the display step read "<0.01\"" / "<0.1mm" rather than 0.
+function formatPrecipAmount(mm, useImperial) {
+  var n = validAmountMm(mm)
+  if (n === null) return "—"
+  if (n === 0) return useImperial ? "0\"" : "0mm"
+  if (useImperial) {
+    var inches = n / 25.4
+    if (inches < 0.005) return "<0.01\""
+    return (inches >= 10 ? inches.toFixed(1) : inches.toFixed(2)) + "\""
+  }
+  if (n < 0.05) return "<0.1mm"
+  return (n >= 100 ? String(Math.round(n)) : n.toFixed(1)) + "mm"
+}
+
 // Remaining hours of the current local day from the daily-forecast report.
 // Each entry: time, tempC/tempF, precipProb, code, night.
 function hourlyForecastToday(report, nowIso) {
@@ -405,6 +430,7 @@ function hourlyForecastToday(report, nowIso) {
       tempC: roundedTemp(c),
       tempF: roundedTemp(celsiusToFahrenheit(c)),
       precipProb: hourly.precipitation_probability ? roundedTemp(hourly.precipitation_probability[i]) : "",
+      precipMm: amountMm(hourly.precipitation, i),
       code: hourly.weather_code ? hourly.weather_code[i] : null,
       night: hourly.is_day ? Number(hourly.is_day[i]) === 0 : false
     })
@@ -429,6 +455,7 @@ function hourlyForecast(report, nowIso) {
       tempC: roundedTemp(c),
       tempF: roundedTemp(celsiusToFahrenheit(c)),
       precipProb: hourly.precipitation_probability ? roundedTemp(hourly.precipitation_probability[i]) : "",
+      precipMm: amountMm(hourly.precipitation, i),
       code: hourly.weather_code ? hourly.weather_code[i] : null,
       night: hourly.is_day ? Number(hourly.is_day[i]) === 0 : false
     })
@@ -458,6 +485,7 @@ function dailyForecast(report, todayString, maxDays) {
       minC: roundedTemp(minC),
       minF: roundedTemp(celsiusToFahrenheit(minC)),
       precipProb: daily.precipitation_probability_max ? roundedTemp(daily.precipitation_probability_max[i]) : "",
+      precipMm: amountMm(daily.precipitation_sum, i),
       uv: daily.uv_index_max ? Number(daily.uv_index_max[i]) : null,
       sunrise: daily.sunrise ? timeOf(daily.sunrise[i]) : "",
       sunset: daily.sunset ? timeOf(daily.sunset[i]) : ""
@@ -635,6 +663,8 @@ if (typeof module !== "undefined") {
     formatClock: formatClock,
     hourlyForecast: hourlyForecast,
     hourlyForecastToday: hourlyForecastToday,
+    amountMm: amountMm,
+    formatPrecipAmount: formatPrecipAmount,
     dailyForecast: dailyForecast,
     todayExtras: todayExtras,
     aqiSummary: aqiSummary

@@ -965,10 +965,10 @@ Panel {
       + "?latitude=" + encodeURIComponent(String(lat))
       + "&longitude=" + encodeURIComponent(String(lon))
       + "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_direction_10m,surface_pressure,weather_code,is_day,cloud_cover,precipitation"
-      + "&hourly=temperature_2m,precipitation_probability,weather_code,is_day"
+      + "&hourly=temperature_2m,precipitation_probability,precipitation,weather_code,is_day"
       + "&minutely_15=precipitation,precipitation_probability"
       + "&forecast_minutely_15=16"
-      + "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,precipitation_probability_max"
+      + "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,precipitation_probability_max,precipitation_sum"
       + "&forecast_days=10"
       + "&timezone=auto"
     dailyForecastProc.command = Model.curlGet(url, 5, Model.MAX_JSON_BYTES)
@@ -2533,7 +2533,8 @@ KeyboardPanel {
                     kind: "liquid",
                     level: root.carouselDay.precipProb !== "" && isFinite(Number(root.carouselDay.precipProb))
                       ? Number(root.carouselDay.precipProb) / 100
-                      : -1
+                      : -1,
+                    detail: Model.formatPrecipAmount(root.carouselDay.precipMm, root.useImperial)
                   },
                   { label: "UV", value: root.carouselUv ? root.carouselUv.label : "—", kind: "text", level: -1 },
                   { label: "SUNRISE", value: root.carouselDay.sunrise ? Model.formatClock(root.carouselDay.sunrise, root.use12Hour) : "—", kind: "text", level: -1 },
@@ -2547,7 +2548,7 @@ KeyboardPanel {
                     ? Math.max(0, Math.min(1, Number(modelData.level)))
                     : 0
                   width: (carouselSection.width - Style.space(18)) / 4
-                  height: Style.space(46)
+                  height: Style.space(58)
                   radius: Math.min(Style.space(8), Style.cornerRadius)
                   color: Util.alpha(root.bar.foreground, 0.045)
                   border.width: Math.max(1, Style.space(1))
@@ -2630,6 +2631,18 @@ KeyboardPanel {
                       font.pixelSize: Style.font.bodySmall
                       font.bold: true
                     }
+
+                    Text {
+                      textFormat: Text.PlainText
+                      width: parent.width
+                      horizontalAlignment: Text.AlignHCenter
+                      elide: Text.ElideRight
+                      visible: text !== ""
+                      text: modelData.detail || ""
+                      color: root.dimText
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
                   }
                 }
               }
@@ -2661,7 +2674,7 @@ KeyboardPanel {
                   Layout.fillWidth: true
                   Layout.minimumWidth: 0
                   clip: true
-                  height: root.metricCellHeight + Style.space(32)
+                  height: root.metricCellHeight + Style.space(48)
                   radius: Math.min(4, Style.cornerRadius)
                   color: modelData.isToday ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.1) : Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.05)
 
@@ -2710,6 +2723,17 @@ KeyboardPanel {
                       elide: Text.ElideRight
                       text: root.bareTempForDay(modelData, "min")
                       color: root.dimText
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+
+                    Text {
+                      textFormat: Text.PlainText
+                      width: parent.width
+                      horizontalAlignment: Text.AlignHCenter
+                      elide: Text.ElideRight
+                      text: Model.formatPrecipAmount(modelData.precipMm, root.useImperial)
+                      color: modelData.precipMm > 0 ? root.bar.foreground : root.dimText
                       font.family: root.bar.fontFamily
                       font.pixelSize: Style.font.caption
                     }
@@ -2850,6 +2874,14 @@ KeyboardPanel {
                         visible: text !== ""
                         text: modelData.precipProb !== "" ? (modelData.precipProb + "%") : ""
                         color: root.dimText
+                        font.family: root.bar.fontFamily
+                        font.pixelSize: Style.font.caption
+                      }
+                      Text {
+                        textFormat: Text.PlainText
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: Model.formatPrecipAmount(modelData.precipMm, root.useImperial)
+                        color: modelData.precipMm > 0 ? root.bar.foreground : root.dimText
                         font.family: root.bar.fontFamily
                         font.pixelSize: Style.font.caption
                       }
