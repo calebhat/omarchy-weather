@@ -5,6 +5,8 @@
 .pragma library
 .import "Model.js" as Model
 .import "Moon.js" as Moon
+.import "Tides.js" as Tides
+.import "Zone.js" as Zone
 
 var DASH = "—"
 var WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -180,7 +182,10 @@ function moonDetail(report, date, twelveHour) {
   }
 }
 
-function dayDetail(report, i, useImperial, twelveHour, formatDate) {
+// formatDate is an optional locale formatter for the heading. tideInfo is
+// { station, distanceKm, events } from the panel, or null when tides are off or
+// no station is in range.
+function dayDetail(report, i, useImperial, twelveHour, formatDate, tideInfo) {
   var d = report && report.daily
   if (!d || !validIndex(d.time, i)) return null
 
@@ -205,7 +210,6 @@ function dayDetail(report, i, useImperial, twelveHour, formatDate) {
     ],
     rainStrip: rainStrip(report, date),
     moon: moonDetail(report, date, twelveHour),
-    // Slot for the tide rows added by a later feature.
-    tides: null
+    tides: Tides.dayTides(tideInfo, date, Zone.of(report), useImperial, twelveHour)
   }
 }

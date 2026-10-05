@@ -8,6 +8,7 @@ import "Model.js" as Model
 import "Detail.js" as Detail
 import "Moon.js" as Moon
 import "Zone.js" as Zone
+import "Tides.js" as Tides
 import "RadarModel.js" as RadarModel
 
 Panel {
@@ -353,8 +354,124 @@ Panel {
     ? Detail.hourDetail(dailyForecastReport, detailSelection.index, useImperial, use12Hour)
     : (detailSelection.kind === "day"
       ? Detail.dayDetail(zonedReport, detailSelection.index, useImperial, use12Hour,
-        function(d) { return Qt.formatDate(d, "ddd MMM d") })
+        function(d) { return Qt.formatDate(d, "ddd MMM d") }, tideInfo)
       : null)
+
+  // ---- Tides. The nearest station comes from the index shipped with the
+  //      plugin; predictions are fetched while the panel is open on the
+  //      forecast, at most once a day per station, and kept under ~/.local/state (the shell
+  //      rebuilds every plugin service when a file inside the plugin changes).
+  // The one `tides` setting: auto (a station within 100 km), on (the nearest
+  // station at any distance) or off. See Tides.stationFor.
+  readonly property string tidesMode: Tides.normalizeMode(setting("tides", "auto"))
+  property var tideStations: []
+  property var tideCache: ({ version: 1, stations: {} })
+  property bool tideCacheLoaded: false
+  property var tideRequest: null
+  property real tideRetryAt: 0
+
+  // Null when off, or in auto with no station in range: then there is no tide
+  // request, no cache file read or write, and no tide UI.
+  readonly property var tideChoice: dailyForecastReport
+    ? Tides.stationFor(tideStations, dailyForecastReport.latitude, dailyForecastReport.longitude, tidesMode)
+    : null
+  readonly property string tideKey: tideChoice ? tideChoice.station.provider + ":" + tideChoice.station.id : ""
+  readonly property var tideInfo: tideChoice
+    ? { station: tideChoice.station, distanceKm: tideChoice.km, events: Tides.eventsFor(tideCache, tideKey) }
+    : null
+
+  // One line of text below the hourly cards: the station, rising or falling,
+  // and the next high or low (Tides.nextLine). It comes from the cached events
+  // for the station the card uses and never starts a request itself. Empty, and
+  // so taking no space, when tides are inactive, no events are cached, or none
+  // lies after now. `tideNow` moves on once a minute while the panel is open
+  // with a station, so the line follows the tide without any other work.
+  property real tideNow: Date.now()
+  readonly property string tideLine: tideInfo
+    ? Tides.nextLine(tideInfo.station, tideInfo.events, tideNow, Zone.of(zonedReport), useImperial, use12Hour)
+    : ""
+
+  Timer {
+    id: tideNowTimer
+    interval: 60000
+    repeat: true
+    running: root.opened && root.tideChoice !== null
+    onTriggered: root.tideNow = Date.now()
+  }
+
+  onTideKeyChanged: ensureTides()
+  onOpenedChanged: {
+    tideNow = Date.now()
+    ensureTides()
+  }
+  onMainViewChanged: ensureTides()
+
+  // Fetch when the panel is open on the forecast view (the hourly strip draws
+  // the line under the hourly cards), for the station the `tides` setting picks, at
+  // most once a day. No station (off, or auto and out of range) means no key and
+  // no request. Tides.wantsFetch holds the whole decision.
+  function ensureTides() {
+    if (!tideChoice) return
+    if (!Tides.wantsFetch({ opened: root.opened, view: root.mainView, key: tideKey, cacheLoaded: tideCacheLoaded,
+        running: tideProc.running, retryAt: tideRetryAt, cache: tideCache, now: Date.now() })) return
+    var win = Tides.windowFor(zonedReport)
+    if (!win) return
+    var argv = Tides.PROVIDERS[tideChoice.station.provider].request(tideChoice.station.id, win.fromMs, win.toMs)
+    if (!argv) return
+    tideRequest = { key: tideKey, provider: tideChoice.station.provider }
+    tideProc.command = argv
+    tideProc.running = true
+  }
+
+  // A response answers the station it was asked for. If the location moved on
+  // while curl ran it is dropped, and the new station is fetched instead.
+  function finishTideFetch(raw) {
+    var asked = tideRequest
+    tideRequest = null
+    if (asked && Tides.isCurrent(asked, tideKey)) {
+      var events = Model.rejectOversized(raw, Tides.MAX_TIDE_BYTES) ? null : Tides.PROVIDERS[asked.provider].parse(raw)
+      if (events === null) {
+        tideRetryAt = Date.now() + 10 * 60 * 1000
+      } else {
+        tideCache = Tides.withEntry(tideCache, asked.key, events, Date.now())
+        tideCacheFile.setText(Tides.serializeCache(tideCache))
+      }
+    }
+    ensureTides()
+  }
+
+  FileView {
+    id: tideIndexFile
+    path: root.tidesMode !== "off" ? Zone.localPath(Qt.resolvedUrl("tide-stations.json").toString()) : ""
+    printErrors: false
+    onLoaded: root.tideStations = Tides.parseIndex(text())
+    onLoadFailed: root.tideStations = []
+  }
+
+  FileView {
+    id: tideCacheFile
+    path: root.tideChoice ? Quickshell.env("HOME") + "/.local/state/omarchy/detailed-weather-tides.json" : ""
+    atomicWrites: true
+    printErrors: false
+    onLoaded: {
+      root.tideCache = Tides.parseCache(text())
+      root.tideCacheLoaded = true
+      root.ensureTides()
+    }
+    onLoadFailed: {
+      root.tideCache = Tides.parseCache("")
+      root.tideCacheLoaded = true
+      root.ensureTides()
+    }
+  }
+
+  Process {
+    id: tideProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.finishTideFetch(String(text || ""))
+    }
+  }
 
   function toggleDetail(kind, reportIndex) {
     detailSelection = Detail.nextSelection(detailSelection, kind, reportIndex)
@@ -3035,6 +3152,18 @@ KeyboardPanel {
                 Item { width: hourlyStrip.edgeInset; height: 1 }
               }
             }
+
+            // The next high or low, as one line. Hidden (and so no height) when empty.
+            Text {
+              visible: text !== ""
+              textFormat: Text.PlainText
+              width: parent.width
+              elide: Text.ElideRight
+              text: root.tideLine
+              color: root.dimText
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+            }
           }
 
           // ---- METRICS ----------------------------------------------------
@@ -3558,6 +3687,61 @@ KeyboardPanel {
                 foreground: root.bar.foreground
                 onToggled: root.persistSetting("orbitAutoSpin", !root.orbitAutoSpin)
               }
+            }
+
+            PanelSectionHeader {
+              text: "TIDES"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+            }
+
+            Row {
+              spacing: Style.space(6)
+
+              Repeater {
+                model: [
+                  { id: "auto", label: "Auto" },
+                  { id: "on", label: "On" },
+                  { id: "off", label: "Off" }
+                ]
+
+                Rectangle {
+                  required property var modelData
+                  width: tideModeLabel.implicitWidth + Style.space(16)
+                  height: Style.space(28)
+                  radius: Math.min(4, Style.cornerRadius)
+                  color: root.tidesMode === modelData.id
+                    ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.12)
+                    : "transparent"
+
+                  Text {
+                    textFormat: Text.PlainText
+                    id: tideModeLabel
+                    anchors.centerIn: parent
+                    text: modelData.label
+                    color: root.tidesMode === modelData.id ? root.bar.foreground : root.dimText
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: root.tidesMode === modelData.id
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.persistSetting("tides", modelData.id)
+                  }
+                }
+              }
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "High and low tides in the day card, from NOAA (US) or the Canadian Hydrographic Service. Auto shows them when the nearest tide station is within 100 km of your location; On always uses the nearest station, at any distance; Off never shows them. The card names the station and how far away it is."
+              color: root.dimText
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
             }
 
             PanelSectionHeader {

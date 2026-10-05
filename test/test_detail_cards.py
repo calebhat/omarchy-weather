@@ -50,9 +50,8 @@ class DetailCardTests(unittest.TestCase):
     def test_day_heading_uses_the_panels_locale_date_format(self):
         self.assertIn('Qt.formatDate(d, "ddd MMM d")', PANEL)
 
-    def test_components_exist_and_leave_the_tide_slot(self):
-        day = (PLUGIN / "DayDetail.qml").read_text(encoding="utf-8")
-        self.assertIn("SLOT: tides", day)
+    def test_components_exist(self):
+        self.assertTrue((PLUGIN / "DayDetail.qml").exists())
         self.assertTrue((PLUGIN / "HourDetail.qml").exists())
 
     def test_the_forecast_zone_comes_from_the_shipped_table_and_reaches_the_cards(self):

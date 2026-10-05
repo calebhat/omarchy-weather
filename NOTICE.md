@@ -13,6 +13,9 @@ patterns from Omarchy's built-in weather widget.
   Omarchy `omarchy.weather` © David Heinemeier Hansson
 
 Weather data remains copyright of the providers (Open-Meteo, wttr.in).
+Tide predictions are from NOAA CO-OPS (US government work) and the Canadian
+Hydrographic Service, Fisheries and Oceans Canada, used under the Open
+Government Licence – Canada; `tide-stations.json` lists their stations.
 Radar websites opened in the browser remain those sites' own products.
 
 ## SunCalc

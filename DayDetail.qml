@@ -151,6 +151,76 @@ Column {
     }
   }
 
-  // SLOT: tides (feature 3) — that day's highs and lows and the station.
-  // Stays empty on this branch.
+  // Tides: only when a station is in range.
+  Column {
+    width: parent.width
+    spacing: Style.space(6)
+    visible: !!root.card && !!root.card.tides
+
+    Text {
+      textFormat: Text.PlainText
+      width: parent.width
+      wrapMode: Text.WordWrap
+      text: root.card && root.card.tides ? root.card.tides.station : ""
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    // One line per tide: type, time and height in their own columns, each wide
+    // enough for its text, so neither is ever cut off.
+    Column {
+      id: tideTable
+      width: parent.width
+      spacing: Style.space(4)
+
+      Repeater {
+        model: root.card && root.card.tides ? root.card.tides.rows : []
+
+        Row {
+          required property var modelData
+          width: tideTable.width
+          spacing: Style.space(8)
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width * 0.3
+            text: modelData.label
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width * 0.35 - parent.spacing
+            text: modelData.time !== undefined ? modelData.time : modelData.value
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width * 0.35 - parent.spacing
+            horizontalAlignment: Text.AlignRight
+            text: modelData.height !== undefined ? modelData.height : ""
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+        }
+      }
+    }
+
+    Text {
+      textFormat: Text.PlainText
+      width: parent.width
+      wrapMode: Text.WordWrap
+      text: root.card && root.card.tides ? root.card.tides.datum + " · " + root.card.tides.credit : ""
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+  }
 }
