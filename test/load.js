@@ -21,18 +21,23 @@ const PLUGIN = join(__dirname, "..")
 // naming it here would be a reference error rather than an export.
 const DECLARATION = /^(?:var|function)\s+([A-Za-z_$][\w$]*)/gm
 
+// `.import "Other.js" as Name` becomes a parameter holding that library, so a
+// library that leans on another is tested against the real one.
+const IMPORT = /^\s*\.import\s+"([^"]+)"\s+as\s+(\w+)/gm
+
 function loadLibrary(fileName) {
-  const source = readFileSync(join(PLUGIN, fileName), "utf8")
-    .replace(/^\s*\.(pragma|import)\b.*$/gm, "")
+  const raw = readFileSync(join(PLUGIN, fileName), "utf8")
+  const imports = [...raw.matchAll(IMPORT)].map(match => [match[2], loadLibrary(match[1])])
+  const source = raw.replace(/^\s*\.(pragma|import)\b.*$/gm, "")
 
   const exported = [...new Set([...source.matchAll(DECLARATION)].map(match => match[1]))]
   if (exported.length === 0) throw new Error(`${fileName} declares nothing at the top level`)
 
   const factory = vm.runInThisContext(
-    `(function () {\n${source}\nreturn { ${exported.join(", ")} }\n})`,
+    `(function (${imports.map(pair => pair[0]).join(", ")}) {\n${source}\nreturn { ${exported.join(", ")} }\n})`,
     { filename: fileName })
 
-  return factory()
+  return factory(...imports.map(pair => pair[1]))
 }
 
 module.exports = { loadLibrary, RadarModel: loadLibrary("RadarModel.js") }
