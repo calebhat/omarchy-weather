@@ -7,6 +7,7 @@ const { loadLibrary } = require("./load.js")
 
 const Detail = loadLibrary("Detail.js")
 const Model = loadLibrary("Model.js")
+const Moon = loadLibrary("Moon.js")
 
 function report() {
   const times = []
@@ -251,10 +252,33 @@ test("polar day and night say so instead of showing a dash", () => {
   assert.equal(row(card, "daylight"), "0h 00m")
 })
 
-test("day card leaves slots for moon and tides, empty on this branch", () => {
+test("day card has no moon without a place, and leaves the tide slot empty", () => {
   const card = Detail.dayDetail(report(), 0, false, false)
   assert.ok("moon" in card && card.moon === null)
   assert.ok("tides" in card && card.tides === null)
+})
+
+test("day card carries the moon for the forecast's own place and zone", () => {
+  const r = report()
+  r.latitude = 39.74
+  r.longitude = -104.99
+  r.utc_offset_seconds = -21600
+  const card = Detail.dayDetail(r, 0, false, true)
+  assert.equal(card.moon.glyph, Moon.dayInfo("2026-10-05", 39.74, -104.99, -21600, true).glyph)
+  assert.equal(card.moon.phase, "Waning Crescent · 26%")
+  assert.deepEqual(card.moon.rows.map(x => x.key), ["moonrise", "moonset"])
+  assert.match(card.moon.rows.find(x => x.key === "moonrise").value, /^1:\d\d AM$/)
+  assert.match(card.moon.rows.find(x => x.key === "moonset").value, /^4:\d\d PM$/)
+})
+
+test("day card moon is polar-aware", () => {
+  const r = report()
+  r.daily.time[0] = "2026-12-24"
+  r.latitude = 78.22
+  r.longitude = 15.63
+  r.utc_offset_seconds = 3600
+  const moon = Detail.dayDetail(r, 0, false, false).moon
+  assert.equal(moon.rows.find(x => x.key === "moonrise").value, "Up all day")
 })
 
 test("day card for a bad index is null", () => {

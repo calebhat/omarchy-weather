@@ -6,6 +6,8 @@ import qs.Commons
 import qs.Ui
 import "Model.js" as Model
 import "Detail.js" as Detail
+import "Moon.js" as Moon
+import "Zone.js" as Zone
 import "RadarModel.js" as RadarModel
 
 Panel {
@@ -332,16 +334,37 @@ Panel {
   property string weatherWipeLabel: "REFRESHING FORECAST"
   // The open detail card: kind is "hour" or "day", index is the position in
   // the forecast report. Detail.js builds what the card shows.
+  // Open-Meteo writes every time in one fixed offset, so the wall clock on each
+  // date comes from the shipped table of zone changes (Zone.js).
+  property var tzTable: ({})
+  readonly property var forecastZone: Zone.forReport(dailyForecastReport, tzTable, Date.now())
+  readonly property var zonedReport: Zone.attach(dailyForecastReport, forecastZone)
+
+  FileView {
+    id: tzFile
+    path: Zone.localPath(Qt.resolvedUrl("tz-transitions.json").toString())
+    printErrors: false
+    onLoaded: root.tzTable = Zone.parseTable(text())
+    onLoadFailed: root.tzTable = ({})
+  }
+
   property var detailSelection: ({ kind: "", index: -1 })
   readonly property var detailCard: detailSelection.kind === "hour"
     ? Detail.hourDetail(dailyForecastReport, detailSelection.index, useImperial, use12Hour)
     : (detailSelection.kind === "day"
-      ? Detail.dayDetail(dailyForecastReport, detailSelection.index, useImperial, use12Hour,
+      ? Detail.dayDetail(zonedReport, detailSelection.index, useImperial, use12Hour,
         function(d) { return Qt.formatDate(d, "ddd MMM d") })
       : null)
 
   function toggleDetail(kind, reportIndex) {
     detailSelection = Detail.nextSelection(detailSelection, kind, reportIndex)
+  }
+
+  // Phase glyph for a date at the forecast's own place; empty when the report
+  // does not say where it is.
+  function moonGlyph(date) {
+    var day = Moon.reportDay(zonedReport, date, use12Hour)
+    return day ? day.glyph : ""
   }
 
   function closeDetail() {
@@ -2771,7 +2794,7 @@ KeyboardPanel {
                   Layout.fillWidth: true
                   Layout.minimumWidth: 0
                   clip: true
-                  height: root.metricCellHeight + Style.space(48)
+                  height: root.metricCellHeight + Style.space(64)
                   radius: Math.min(4, Style.cornerRadius)
                   color: modelData.isToday ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.1) : Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.05)
 
@@ -2796,6 +2819,17 @@ KeyboardPanel {
                       font.family: root.bar.fontFamily
                       font.pixelSize: Style.font.caption
                       font.bold: modelData.isToday
+                    }
+
+                    Text {
+                      textFormat: Text.PlainText
+                      width: parent.width
+                      horizontalAlignment: Text.AlignHCenter
+                      visible: text !== ""
+                      text: root.moonGlyph(modelData.date)
+                      color: root.dimText
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.caption
                     }
 
                     Text {

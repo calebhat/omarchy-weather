@@ -4,6 +4,7 @@
 // number in a plausible range; anything else is a dash, never zero.
 .pragma library
 .import "Model.js" as Model
+.import "Moon.js" as Moon
 
 var DASH = "—"
 var WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -166,6 +167,19 @@ function dayTitle(date, formatDate) {
   return (weekday(date) + " " + MONTHS[Number(m[2]) - 1] + " " + Number(m[3])).replace(/^\s+/, "")
 }
 
+function moonDetail(report, date, twelveHour) {
+  var day = Moon.reportDay(report, date, twelveHour)
+  if (!day) return null
+  return {
+    glyph: day.glyph,
+    phase: day.name + " · " + day.percent + "%",
+    rows: [
+      row("moonrise", "Moonrise", day.riseText),
+      row("moonset", "Moonset", day.setText)
+    ]
+  }
+}
+
 function dayDetail(report, i, useImperial, twelveHour, formatDate) {
   var d = report && report.daily
   if (!d || !validIndex(d.time, i)) return null
@@ -190,8 +204,8 @@ function dayDetail(report, i, useImperial, twelveHour, formatDate) {
       row("daylight", "Daylight", duration(daylight))
     ],
     rainStrip: rainStrip(report, date),
-    // Slots for the moon and tide rows added by later features.
-    moon: null,
+    moon: moonDetail(report, date, twelveHour),
+    // Slot for the tide rows added by a later feature.
     tides: null
   }
 }

@@ -29,7 +29,7 @@ class DetailCardTests(unittest.TestCase):
             "function closeDetail()",
             "Detail.nextSelection(",
             "Detail.hourDetail(dailyForecastReport",
-            "Detail.dayDetail(dailyForecastReport",
+            "Detail.dayDetail(zonedReport",
             "HourDetail {",
             "DayDetail {",
         ):
@@ -50,11 +50,33 @@ class DetailCardTests(unittest.TestCase):
     def test_day_heading_uses_the_panels_locale_date_format(self):
         self.assertIn('Qt.formatDate(d, "ddd MMM d")', PANEL)
 
-    def test_components_exist_and_leave_slots(self):
+    def test_components_exist_and_leave_the_tide_slot(self):
         day = (PLUGIN / "DayDetail.qml").read_text(encoding="utf-8")
-        self.assertIn("SLOT: moon", day)
         self.assertIn("SLOT: tides", day)
         self.assertTrue((PLUGIN / "HourDetail.qml").exists())
+
+    def test_the_forecast_zone_comes_from_the_shipped_table_and_reaches_the_cards(self):
+        for contract in (
+            'import "Zone.js" as Zone',
+            'Zone.localPath(Qt.resolvedUrl("tz-transitions.json").toString())',
+            "Zone.parseTable(text())",
+            "Zone.forReport(dailyForecastReport, tzTable, Date.now())",
+            "Zone.attach(dailyForecastReport, forecastZone)",
+            "Detail.dayDetail(zonedReport,",
+            "Moon.reportDay(zonedReport,",
+        ):
+            self.assertIn(contract, PANEL)
+
+    def test_moon_is_drawn_in_the_card_and_the_strip(self):
+        day = (PLUGIN / "DayDetail.qml").read_text(encoding="utf-8")
+        self.assertIn("root.card.moon", day)
+        # The phase line has its own full-width line beside the glyph; it is not
+        # a row squeezed into a two-column cell.
+        self.assertIn("root.card.moon.phase", day)
+        self.assertNotIn("moonPhase", day)
+        self.assertIn('import "Moon.js" as Moon', PANEL)
+        self.assertIn("function moonGlyph(date)", PANEL)
+        self.assertIn("root.moonGlyph(modelData.date)", PANEL)
 
 
 if __name__ == "__main__":
