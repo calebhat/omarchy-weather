@@ -88,8 +88,31 @@ function weekday(dateString) {
   return isNaN(d.getTime()) ? "" : WEEKDAYS[d.getUTCDay()]
 }
 
-function row(key, label, value) {
-  return { key: key, label: label, value: value }
+// A row may also carry `segments`, the same text cut into pieces each with a
+// tone name (see Palette.toneColor). A dash never gets a tone.
+function row(key, label, value, segments) {
+  var r = { key: key, label: label, value: value }
+  if (segments) r.segments = segments
+  return r
+}
+
+function seg(text, tone) {
+  return { text: text, tone: text === DASH ? "" : tone }
+}
+
+function uvTone(v) {
+  var info = v === null ? null : Model.uvInfo(v)
+  return info ? "uv" + info.level : ""
+}
+
+function range(hi, lo, useImperial) {
+  return [seg(temp(hi, useImperial), "tempHigh"), seg(" / ", ""), seg(temp(lo, useImperial), "tempLow")]
+}
+
+function joined(segments) {
+  var text = ""
+  for (var i = 0; i < segments.length; i++) text += segments[i].text
+  return text
 }
 
 function validIndex(list, i) {
@@ -114,6 +137,8 @@ function hourDetail(report, i, useImperial, twelveHour) {
   var clock = Model.formatClock(Model.timeOf(t), twelveHour, false)
   var title = (weekday(t) + " " + clock).replace(/^\s+/, "")
   var chance = num(h.precipitation_probability, i, 0, 100)
+  var rainText = Model.formatPrecipAmount(Model.amountMm(h.precipitation, i), useImperial)
+  var hourUv = num(h.uv_index, i, 0, 20)
 
   return {
     title: title,
@@ -121,7 +146,7 @@ function hourDetail(report, i, useImperial, twelveHour) {
       row("temp", "Temperature", temp(num(h.temperature_2m, i, -100, 100), useImperial)),
       row("feels", "Feels like", temp(num(h.apparent_temperature, i, -100, 100), useImperial)),
       row("rainChance", "Rain chance", percent(chance)),
-      row("rainAmount", "Rain amount", Model.formatPrecipAmount(Model.amountMm(h.precipitation, i), useImperial)),
+      row("rainAmount", "Rain amount", rainText, [seg(rainText, "rainAmount")]),
       row("wind", "Wind", withDirection(speed(num(h.wind_speed_10m, i, 0, 500), useImperial),
         num(h.wind_direction_10m, i, 0, 360))),
       row("gusts", "Gusts", speed(num(h.wind_gusts_10m, i, 0, 500), useImperial)),
@@ -130,7 +155,7 @@ function hourDetail(report, i, useImperial, twelveHour) {
       row("cloud", "Cloud cover", percent(num(h.cloud_cover, i, 0, 100))),
       row("pressure", "Pressure", pressure(num(h.pressure_msl, i, 800, 1100), useImperial)),
       row("visibility", "Visibility", visibility(num(h.visibility, i, 0, 1000000), useImperial)),
-      row("uv", "UV index", uv(num(h.uv_index, i, 0, 20)))
+      row("uv", "UV index", uv(hourUv), [seg(uv(hourUv), uvTone(hourUv))])
     ]
   }
 }
@@ -191,19 +216,24 @@ function dayDetail(report, i, useImperial, twelveHour, formatDate, tideInfo) {
 
   var date = String(d.time[i])
   var daylight = num(d.daylight_duration, i, 0, 86400)
-  var range = function(hi, lo) { return temp(hi, useImperial) + " / " + temp(lo, useImperial) }
+  var high = num(d.temperature_2m_max, i, -100, 100)
+  var low = num(d.temperature_2m_min, i, -100, 100)
+  var feelsHigh = num(d.apparent_temperature_max, i, -100, 100)
+  var feelsLow = num(d.apparent_temperature_min, i, -100, 100)
+  var rainTotal = Model.formatPrecipAmount(Model.amountMm(d.precipitation_sum, i), useImperial)
+  var dayUv = num(d.uv_index_max, i, 0, 20)
 
   return {
     title: dayTitle(date, formatDate),
     rows: [
-      row("highLow", "High / low", range(num(d.temperature_2m_max, i, -100, 100), num(d.temperature_2m_min, i, -100, 100))),
-      row("feelsRange", "Feels like", range(num(d.apparent_temperature_max, i, -100, 100), num(d.apparent_temperature_min, i, -100, 100))),
+      row("highLow", "High / low", joined(range(high, low, useImperial)), range(high, low, useImperial)),
+      row("feelsRange", "Feels like", joined(range(feelsHigh, feelsLow, useImperial)), range(feelsHigh, feelsLow, useImperial)),
       row("rainChance", "Rain chance", percent(num(d.precipitation_probability_max, i, 0, 100))),
-      row("rainTotal", "Rain total", Model.formatPrecipAmount(Model.amountMm(d.precipitation_sum, i), useImperial)),
+      row("rainTotal", "Rain total", rainTotal, [seg(rainTotal, "rainAmount")]),
       row("wind", "Max wind", withDirection(speed(num(d.wind_speed_10m_max, i, 0, 500), useImperial),
         num(d.wind_direction_10m_dominant, i, 0, 360))),
       row("gusts", "Max gusts", speed(num(d.wind_gusts_10m_max, i, 0, 500), useImperial)),
-      row("uv", "UV index", uv(num(d.uv_index_max, i, 0, 20))),
+      row("uv", "UV index", uv(dayUv), [seg(uv(dayUv), uvTone(dayUv))]),
       row("sunrise", "Sunrise", sunEvent(Array.isArray(d.sunrise) ? d.sunrise[i] : null, daylight, twelveHour)),
       row("sunset", "Sunset", sunEvent(Array.isArray(d.sunset) ? d.sunset[i] : null, daylight, twelveHour)),
       row("daylight", "Daylight", duration(daylight))

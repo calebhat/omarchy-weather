@@ -286,6 +286,60 @@ test("day card for a bad index is null", () => {
   assert.equal(Detail.dayDetail(null, 0, false, false), null)
 })
 
+const segments = (card, key) => card.rows.find(r => r.key === key).segments
+
+test("hour card marks rain amount and UV with a tone, and nothing else", () => {
+  const card = Detail.hourDetail(report(), 14, false, false)
+  assert.deepEqual(segments(card, "rainAmount"), [{ text: "2.5mm", tone: "rainAmount" }])
+  assert.deepEqual(segments(card, "uv"), [{ text: "6 High", tone: "uv2" }])
+  for (const key of ["temp", "feels", "wind", "gusts", "humidity", "pressure", "visibility"]) {
+    assert.equal(segments(card, key), undefined, key)
+  }
+})
+
+test("UV tones follow the bands", () => {
+  const r = report()
+  const tone = uv => {
+    r.hourly.uv_index[3] = uv
+    return segments(Detail.hourDetail(r, 3, false, false), "uv")[0].tone
+  }
+  assert.deepEqual([0, 2, 3, 5, 6, 7, 8, 10, 11, 14].map(tone),
+    ["uv0", "uv0", "uv1", "uv1", "uv2", "uv2", "uv3", "uv3", "uv4", "uv4"])
+})
+
+test("a missing amount or UV has no tone, so a dash is not coloured", () => {
+  const r = report()
+  r.hourly.precipitation[3] = null
+  r.hourly.uv_index[3] = "x"
+  const card = Detail.hourDetail(r, 3, false, false)
+  assert.deepEqual(segments(card, "rainAmount"), [{ text: "—", tone: "" }])
+  assert.deepEqual(segments(card, "uv"), [{ text: "—", tone: "" }])
+})
+
+test("day card colours the high warm and the low cool, in both ranges", () => {
+  const card = Detail.dayDetail(report(), 0, false, false)
+  assert.deepEqual(segments(card, "highLow"), [
+    { text: "22°", tone: "tempHigh" }, { text: " / ", tone: "" }, { text: "12°", tone: "tempLow" }])
+  assert.deepEqual(segments(card, "feelsRange").map(s => s.tone), ["tempHigh", "", "tempLow"])
+  assert.equal(segments(card, "highLow").map(s => s.text).join(""), row(card, "highLow"))
+  assert.equal(segments(card, "feelsRange").map(s => s.text).join(""), row(card, "feelsRange"))
+})
+
+test("a missing high or low is a dash with no tone", () => {
+  const r = report()
+  r.daily.temperature_2m_max[0] = null
+  const parts = segments(Detail.dayDetail(r, 0, false, false), "highLow")
+  assert.deepEqual(parts, [{ text: "—", tone: "" }, { text: " / ", tone: "" }, { text: "12°", tone: "tempLow" }])
+})
+
+test("day card marks rain total and UV with a tone", () => {
+  const card = Detail.dayDetail(report(), 0, false, false)
+  assert.deepEqual(segments(card, "rainTotal"), [{ text: "2.8mm", tone: "rainAmount" }])
+  assert.deepEqual(segments(card, "uv"), [{ text: "6 High", tone: "uv2" }])
+  assert.equal(segments(card, "wind"), undefined)
+  assert.equal(segments(card, "sunrise"), undefined)
+})
+
 test("selecting an item opens it, the same item again closes it, another swaps", () => {
   const open = Detail.nextSelection(null, "hour", 5)
   assert.deepEqual(open, { kind: "hour", index: 5 })

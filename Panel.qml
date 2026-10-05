@@ -9,6 +9,7 @@ import "Detail.js" as Detail
 import "Moon.js" as Moon
 import "Zone.js" as Zone
 import "Tides.js" as Tides
+import "Palette.js" as Palette
 import "RadarModel.js" as RadarModel
 
 Panel {
@@ -356,6 +357,28 @@ Panel {
       ? Detail.dayDetail(zonedReport, detailSelection.index, useImperial, use12Hour,
         function(d) { return Qt.formatDate(d, "ddd MMM d") }, tideInfo)
       : null)
+
+  // Weather colours from the theme's own named colours. Where the theme names
+  // none, each icon colour falls back to the tinted accent used before.
+  ThemePalette {
+    id: themePalette
+    fallbacks: ({
+      sun: String(root.weatherAccentForCode(0)),
+      rain: String(root.weatherAccentForCode(61)),
+      snow: String(root.weatherAccentForCode(71)),
+      storm: String(root.weatherAccentForCode(95)),
+      fog: String(root.weatherAccentForCode(45))
+    })
+  }
+
+  // Icon colour for a weather code: its role colour, else `plain`. A clear
+  // night is a moon, not a sun, so it stays plain.
+  function iconColor(code, plain, night) {
+    var number = (code === null || code === undefined || code === "") ? NaN : Number(code)
+    var role = Palette.iconRole(number)
+    if (role === "" || (night === true && role === "sun")) return plain
+    return themePalette.roles[role]
+  }
 
   // ---- Tides. The nearest station comes from the index shipped with the
   //      plugin; predictions are fetched while the panel is open on the
@@ -1822,6 +1845,7 @@ KeyboardPanel {
                 width: parent.width
                 visible: root.detailSelection.kind === "hour"
                 card: visible ? root.detailCard : null
+                roles: themePalette.roles
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
               }
@@ -1831,6 +1855,7 @@ KeyboardPanel {
                 width: parent.width
                 visible: root.detailSelection.kind === "day"
                 card: visible ? root.detailCard : null
+                roles: themePalette.roles
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
               }
@@ -2632,7 +2657,7 @@ KeyboardPanel {
                         width: parent.width
                         horizontalAlignment: Text.AlignHCenter
                         text: root.iconForOpenMeteoCode(orbitCard.modelData.code, false)
-                        color: orbitCard.storm ? Color.urgent : orbitCard.dayAccent
+                        color: root.iconColor(orbitCard.modelData.code, orbitCard.dayAccent, false)
                         font.family: root.bar.fontFamily
                         font.pixelSize: Style.font.title
                       }
@@ -2821,7 +2846,7 @@ KeyboardPanel {
                       ctx.lineTo(width, height)
                       ctx.lineTo(0, height)
                       ctx.closePath()
-                      ctx.fillStyle = Util.alpha(root.weatherAccent, 0.28).toString()
+                      ctx.fillStyle = Util.alpha(themePalette.roles.rainBar, 0.4).toString()
                       ctx.fill()
                     }
 
@@ -2830,6 +2855,12 @@ KeyboardPanel {
                       enabled: liquidCanvas.visible
                       function onWeatherWavePhaseChanged() { liquidCanvas.requestPaint() }
                       function onWeatherAccentChanged() { liquidCanvas.requestPaint() }
+                    }
+
+                    Connections {
+                      target: themePalette
+                      enabled: liquidCanvas.visible
+                      function onRolesChanged() { liquidCanvas.requestPaint() }
                     }
 
                     Connections {
@@ -2863,7 +2894,7 @@ KeyboardPanel {
                       horizontalAlignment: Text.AlignHCenter
                       elide: Text.ElideRight
                       text: modelData.value
-                      color: root.bar.foreground
+                      color: modelData.label === "UV" && root.carouselUv ? themePalette.roles.uv[root.carouselUv.level] : root.bar.foreground
                       font.family: root.bar.fontFamily
                       font.pixelSize: Style.font.bodySmall
                       font.bold: true
@@ -2876,7 +2907,7 @@ KeyboardPanel {
                       elide: Text.ElideRight
                       visible: text !== ""
                       text: modelData.detail || ""
-                      color: root.dimText
+                      color: modelData.kind === "liquid" && text !== "—" ? themePalette.roles.rainAmount : root.dimText
                       font.family: root.bar.fontFamily
                       font.pixelSize: Style.font.caption
                     }
@@ -2954,7 +2985,7 @@ KeyboardPanel {
                       width: parent.width
                       horizontalAlignment: Text.AlignHCenter
                       text: root.iconForOpenMeteoCode(modelData.code, false)
-                      color: root.bar.foreground
+                      color: root.iconColor(modelData.code, root.bar.foreground, false)
                       font.family: root.bar.fontFamily
                       font.pixelSize: Style.font.heading
                     }
@@ -2987,7 +3018,7 @@ KeyboardPanel {
                       horizontalAlignment: Text.AlignHCenter
                       elide: Text.ElideRight
                       text: Model.formatPrecipAmount(modelData.precipMm, root.useImperial)
-                      color: modelData.precipMm > 0 ? root.bar.foreground : root.dimText
+                      color: modelData.precipMm > 0 ? themePalette.roles.rainAmount : root.dimText
                       font.family: root.bar.fontFamily
                       font.pixelSize: Style.font.caption
                     }
@@ -3113,7 +3144,7 @@ KeyboardPanel {
                         textFormat: Text.PlainText
                         anchors.horizontalCenter: parent.horizontalCenter
                         text: root.iconForOpenMeteoCode(modelData.code, modelData.night)
-                        color: root.bar.foreground
+                        color: root.iconColor(modelData.code, root.bar.foreground, modelData.night)
                         font.family: root.bar.fontFamily
                         font.pixelSize: Style.font.display
                       }
@@ -3141,7 +3172,7 @@ KeyboardPanel {
                         textFormat: Text.PlainText
                         anchors.horizontalCenter: parent.horizontalCenter
                         text: Model.formatPrecipAmount(modelData.precipMm, root.useImperial)
-                        color: modelData.precipMm > 0 ? root.bar.foreground : root.dimText
+                        color: modelData.precipMm > 0 ? themePalette.roles.rainAmount : root.dimText
                         font.family: root.bar.fontFamily
                         font.pixelSize: Style.font.caption
                       }
@@ -3243,7 +3274,7 @@ KeyboardPanel {
                 desc: root.todayExtra && root.uv ? String(Math.round(root.todayExtra.uv)) : ""
                 valuePixelSize: Style.font.body
                 barLevel: root.uvLevel
-                barColor: Util.alpha(Color.accent, 0.85)
+                barColor: root.uv ? Util.alpha(themePalette.roles.uv[root.uv.level], 0.9) : Util.alpha(Color.accent, 0.85)
               }
             }
 

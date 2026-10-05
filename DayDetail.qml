@@ -1,14 +1,22 @@
 import QtQuick
 import qs.Commons
+import "Palette.js" as Palette
 
 // Detail card for one day. `card` is the object Detail.dayDetail returns.
 Column {
   id: root
 
   property var card: null
+  property var roles: ({})
   property color foreground: Color.foreground
   property string fontFamily: Style.font.family
   readonly property color dim: Util.alpha(foreground, 0.8)
+  readonly property color rainBarColor: roles.rainBar !== undefined ? roles.rainBar : foreground
+
+  function toneColor(tone) {
+    var hex = Palette.toneColor(roles, tone)
+    return hex !== "" ? hex : foreground
+  }
   // Tallest bar is the day's wettest hour, but never less than 1 mm, so a
   // drizzly day does not draw its drizzle at full height.
   readonly property real stripMax: {
@@ -33,6 +41,7 @@ Column {
   DetailRows {
     width: parent.width
     entries: root.card ? root.card.rows : []
+    roles: root.roles
     foreground: root.foreground
     fontFamily: root.fontFamily
   }
@@ -70,8 +79,8 @@ Column {
             width: parent.width
             height: modelData.mm === null ? 1 : Math.max(1, parent.height * modelData.mm / root.stripMax)
             radius: 1
-            color: root.foreground
-            opacity: modelData.mm === null ? 0.2 : (modelData.mm > 0 ? 0.85 : 0.2)
+            color: modelData.mm !== null && modelData.mm > 0 ? root.rainBarColor : root.foreground
+            opacity: modelData.mm === null ? 0.2 : (modelData.mm > 0 ? 0.9 : 0.2)
           }
         }
       }
@@ -146,6 +155,7 @@ Column {
     DetailRows {
       width: parent.width
       entries: root.card && root.card.moon ? root.card.moon.rows : []
+      roles: root.roles
       foreground: root.foreground
       fontFamily: root.fontFamily
     }
@@ -195,7 +205,7 @@ Column {
             textFormat: Text.PlainText
             width: parent.width * 0.35 - parent.spacing
             text: modelData.time !== undefined ? modelData.time : modelData.value
-            color: root.foreground
+            color: root.toneColor(modelData.tone)
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
           }
@@ -205,7 +215,7 @@ Column {
             width: parent.width * 0.35 - parent.spacing
             horizontalAlignment: Text.AlignRight
             text: modelData.height !== undefined ? modelData.height : ""
-            color: root.foreground
+            color: root.toneColor(modelData.tone)
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
           }

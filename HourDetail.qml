@@ -6,6 +6,7 @@ Column {
   id: root
 
   property var card: null
+  property var roles: ({})
   property color foreground: Color.foreground
   property string fontFamily: Style.font.family
 
@@ -23,6 +24,7 @@ Column {
   DetailRows {
     width: parent.width
     entries: root.card ? root.card.rows : []
+    roles: root.roles
     foreground: root.foreground
     fontFamily: root.fontFamily
   }

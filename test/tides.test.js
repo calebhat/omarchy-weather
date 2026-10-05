@@ -305,6 +305,16 @@ test("each tide row has its time and height as separate cells", () => {
   assert.equal(dash.time, undefined)
 })
 
+test("highs and lows carry their own tone", () => {
+  const events = Tides.PROVIDERS.dfo.parse(fixture("dfo-07735-wlp-hilo.json"))
+  const rows = Tides.dayTides({ station: VANCOUVER, distanceKm: 3.2, events }, "2026-10-05", PDT, false, false).rows
+  assert.deepEqual(rows.map(r => r.segments), [
+    [{ text: "07:39 · 1.2 m", tone: "tideLow" }],
+    [{ text: "15:20 · 4.5 m", tone: "tideHigh" }],
+    [{ text: "21:26 · 3.0 m", tone: "tideLow" }]])
+  assert.deepEqual(rows.map(r => r.tone), ["tideLow", "tideHigh", "tideLow"])
+})
+
 test("a day with no events, or no events loaded, shows a dash", () => {
   const info = { station: SF, distanceKm: 1, events: [] }
   assert.deepEqual(Tides.dayTides(info, "2026-10-05", PDT, false, false).rows, [{ key: "tides", label: "Tides", value: "—" }])

@@ -109,6 +109,15 @@ own timezone (with the short weekday, `Low Tue 3:10 AM`, when it is not today
 there) and its height in the chosen unit. With tides off, no events, or none
 after now, there is no line and it takes no space.
 
+### Theme colour
+
+Weather icons, rain amounts, UV bands, the day card's high and low, and tide
+highs and lows take their colour from the theme's own `colors.toml` names
+(`yellow`, `blue`, `cyan`, `magenta`, `orange`, `green`, `red`, `muted`). A name
+the theme lacks falls back to the accent tint, and every colour is moved toward
+the foreground until it reads on the theme's background, so light themes stay
+legible. Body text stays the foreground. The choices are in `Palette.js`.
+
 ### Open radar
 
 **Open radar** on the forecast launches the saved site in your default
