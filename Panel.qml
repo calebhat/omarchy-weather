@@ -5,6 +5,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
+import "Detail.js" as Detail
 import "RadarModel.js" as RadarModel
 
 Panel {
@@ -65,6 +66,7 @@ Panel {
   }
 
   function close() {
+    closeDetail()
     setCenterHoverRevealSuppressed(false)
     carouselEntrance.stop()
     carouselSnap.stop()
@@ -328,6 +330,26 @@ Panel {
   property bool weatherWipeDataReady: false
   property color weatherWipeAccent: weatherAccent
   property string weatherWipeLabel: "REFRESHING FORECAST"
+  // The open detail card: kind is "hour" or "day", index is the position in
+  // the forecast report. Detail.js builds what the card shows.
+  property var detailSelection: ({ kind: "", index: -1 })
+  readonly property var detailCard: detailSelection.kind === "hour"
+    ? Detail.hourDetail(dailyForecastReport, detailSelection.index, useImperial, use12Hour)
+    : (detailSelection.kind === "day"
+      ? Detail.dayDetail(dailyForecastReport, detailSelection.index, useImperial, use12Hour,
+        function(d) { return Qt.formatDate(d, "ddd MMM d") })
+      : null)
+
+  function toggleDetail(kind, reportIndex) {
+    detailSelection = Detail.nextSelection(detailSelection, kind, reportIndex)
+  }
+
+  function closeDetail() {
+    detailSelection = ({ kind: "", index: -1 })
+  }
+
+  onDailyForecastReportChanged: if (!dailyForecastReport) closeDetail()
+
   readonly property real carouselFocusAngle: 90
   readonly property int carouselCount: daily.length
   readonly property real carouselStep: carouselCount > 0 ? 360 / carouselCount : 36
@@ -966,9 +988,13 @@ Panel {
       + "&longitude=" + encodeURIComponent(String(lon))
       + "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_direction_10m,surface_pressure,weather_code,is_day,cloud_cover,precipitation"
       + "&hourly=temperature_2m,precipitation_probability,precipitation,weather_code,is_day"
+      + ",apparent_temperature,wind_speed_10m,wind_gusts_10m,wind_direction_10m,relative_humidity_2m"
+      + ",dew_point_2m,cloud_cover,pressure_msl,visibility,uv_index"
       + "&minutely_15=precipitation,precipitation_probability"
       + "&forecast_minutely_15=16"
       + "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,precipitation_probability_max,precipitation_sum"
+      + ",apparent_temperature_max,apparent_temperature_min,wind_speed_10m_max,wind_gusts_10m_max"
+      + ",wind_direction_10m_dominant,daylight_duration"
       + "&forecast_days=10"
       + "&timezone=auto"
     dailyForecastProc.command = Model.curlGet(url, 5, Model.MAX_JSON_BYTES)
@@ -1539,7 +1565,8 @@ KeyboardPanel {
       }
       onReturnRequested: root.startEditingLocation()
       onCloseRequested: {
-        if (root.mainView === "settings") root.showForecastView()
+        if (root.detailCard) root.closeDetail()
+        else if (root.mainView === "settings") root.showForecastView()
         else root.close()
       }
       onTabRequested: function(direction) { root.switchPanel(direction) }
@@ -1601,6 +1628,74 @@ KeyboardPanel {
           fontFamily: root.bar.fontFamily
           foreground: root.bar.foreground
           onClicked: root.showSettings()
+        }
+      }
+
+      // Detail card. The scrim catches clicks outside the card and closes it.
+      Item {
+        id: detailOverlay
+        visible: root.mainView === "forecast" && !!root.detailCard
+        anchors.top: chromeBar.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        z: 40
+
+        Rectangle {
+          anchors.fill: parent
+          color: Qt.rgba(0, 0, 0, 0.35)
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          onClicked: root.closeDetail()
+        }
+
+        Rectangle {
+          id: detailPanel
+          anchors.centerIn: parent
+          width: Math.min(parent.width - Style.space(32), Style.space(380))
+          height: Math.min(parent.height - Style.space(32), detailBody.implicitHeight + Style.space(32))
+          radius: Math.min(8, Style.cornerRadius)
+          color: Color.popups.background
+          border.width: 1
+          border.color: Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.2)
+
+          // Swallows clicks so they do not reach the scrim.
+          MouseArea { anchors.fill: parent }
+
+          Flickable {
+            anchors.fill: parent
+            anchors.margins: Style.space(16)
+            contentWidth: width
+            contentHeight: detailBody.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+
+            Item {
+              id: detailBody
+              width: parent.width
+              implicitHeight: root.detailSelection.kind === "hour" ? hourCard.implicitHeight : dayCard.implicitHeight
+
+              HourDetail {
+                id: hourCard
+                width: parent.width
+                visible: root.detailSelection.kind === "hour"
+                card: visible ? root.detailCard : null
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+              }
+
+              DayDetail {
+                id: dayCard
+                width: parent.width
+                visible: root.detailSelection.kind === "day"
+                card: visible ? root.detailCard : null
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+              }
+            }
+          }
         }
       }
 
@@ -2495,8 +2590,10 @@ KeyboardPanel {
 
                   if (root.carouselDragDistance < Style.space(7)) {
                     var clickedIndex = root.carouselCardAt(mouse.x, mouse.y)
-                    if (clickedIndex >= 0) root.focusCarouselDay(clickedIndex)
-                    else root.focusCarouselDay(root.carouselSelectedIndex)
+                    if (clickedIndex >= 0) {
+                      root.focusCarouselDay(clickedIndex)
+                      root.toggleDetail("day", root.daily[clickedIndex].reportIndex)
+                    } else root.focusCarouselDay(root.carouselSelectedIndex)
                   } else {
                     var projectedAngle = root.carouselAngle + root.carouselVelocity * 180
                     root.settleCarousel((root.carouselFocusAngle - projectedAngle) / root.carouselStep)
@@ -2678,6 +2775,12 @@ KeyboardPanel {
                   radius: Math.min(4, Style.cornerRadius)
                   color: modelData.isToday ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.1) : Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.05)
 
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.toggleDetail("day", modelData.reportIndex)
+                  }
+
                   Column {
                     width: parent.width
                     anchors.verticalCenter: parent.verticalCenter
@@ -2831,6 +2934,12 @@ KeyboardPanel {
                       anchors.fill: parent
                       radius: Math.min(4, Style.cornerRadius)
                       color: index === 0 ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.1) : Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.05)
+                    }
+
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.toggleDetail("hour", modelData.reportIndex)
                     }
 
                     Column {

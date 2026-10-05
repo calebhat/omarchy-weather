@@ -426,6 +426,7 @@ function hourlyForecastToday(report, nowIso) {
     if (t && now && t < now) continue
     var c = hourly.temperature_2m ? hourly.temperature_2m[i] : ""
     out.push({
+      reportIndex: i,
       time: timeOf(t),
       tempC: roundedTemp(c),
       tempF: roundedTemp(celsiusToFahrenheit(c)),
@@ -451,6 +452,7 @@ function hourlyForecast(report, nowIso) {
     if (t && now && t < now) continue
     var c = hourly.temperature_2m ? hourly.temperature_2m[i] : ""
     out.push({
+      reportIndex: i,
       time: timeOf(t),
       tempC: roundedTemp(c),
       tempF: roundedTemp(celsiusToFahrenheit(c)),
@@ -477,6 +479,7 @@ function dailyForecast(report, todayString, maxDays) {
     var maxC = daily.temperature_2m_max ? daily.temperature_2m_max[i] : ""
     var minC = daily.temperature_2m_min ? daily.temperature_2m_min[i] : ""
     out.push({
+      reportIndex: i,
       date: date,
       isToday: todayString ? date === String(todayString) : i === 0,
       code: daily.weather_code ? daily.weather_code[i] : null,
