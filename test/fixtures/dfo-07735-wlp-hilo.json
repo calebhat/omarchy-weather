@@ -1,0 +1,42 @@
+[
+ {
+  "eventDate": "2026-10-05T03:25:00Z",
+  "qcFlagCode": "1",
+  "value": 3.341
+ },
+ {
+  "eventDate": "2026-10-05T06:59:00Z",
+  "qcFlagCode": "1",
+  "value": 3.609
+ },
+ {
+  "eventDate": "2026-10-05T14:39:00Z",
+  "qcFlagCode": "1",
+  "value": 1.158
+ },
+ {
+  "eventDate": "2026-10-05T22:20:00Z",
+  "qcFlagCode": "1",
+  "value": 4.462
+ },
+ {
+  "eventDate": "2026-10-06T04:26:00Z",
+  "qcFlagCode": "1",
+  "value": 3.011
+ },
+ {
+  "eventDate": "2026-10-06T08:46:00Z",
+  "qcFlagCode": "1",
+  "value": 3.574
+ },
+ {
+  "eventDate": "2026-10-06T15:48:00Z",
+  "qcFlagCode": "1",
+  "value": 1.291
+ },
+ {
+  "eventDate": "2026-10-06T23:02:00Z",
+  "qcFlagCode": "1",
+  "value": 4.485
+ }
+]

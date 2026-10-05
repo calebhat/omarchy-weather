@@ -5,6 +5,10 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
+import "Detail.js" as Detail
+import "Moon.js" as Moon
+import "Zone.js" as Zone
+import "Tides.js" as Tides
 import "RadarModel.js" as RadarModel
 
 Panel {
@@ -65,6 +69,7 @@ Panel {
   }
 
   function close() {
+    closeDetail()
     setCenterHoverRevealSuppressed(false)
     carouselEntrance.stop()
     carouselSnap.stop()
@@ -328,6 +333,163 @@ Panel {
   property bool weatherWipeDataReady: false
   property color weatherWipeAccent: weatherAccent
   property string weatherWipeLabel: "REFRESHING FORECAST"
+  // The open detail card: kind is "hour" or "day", index is the position in
+  // the forecast report. Detail.js builds what the card shows.
+  // Open-Meteo writes every time in one fixed offset, so the wall clock on each
+  // date comes from the shipped table of zone changes (Zone.js).
+  property var tzTable: ({})
+  readonly property var forecastZone: Zone.forReport(dailyForecastReport, tzTable, Date.now())
+  readonly property var zonedReport: Zone.attach(dailyForecastReport, forecastZone)
+
+  FileView {
+    id: tzFile
+    path: Zone.localPath(Qt.resolvedUrl("tz-transitions.json").toString())
+    printErrors: false
+    onLoaded: root.tzTable = Zone.parseTable(text())
+    onLoadFailed: root.tzTable = ({})
+  }
+
+  property var detailSelection: ({ kind: "", index: -1 })
+  readonly property var detailCard: detailSelection.kind === "hour"
+    ? Detail.hourDetail(dailyForecastReport, detailSelection.index, useImperial, use12Hour)
+    : (detailSelection.kind === "day"
+      ? Detail.dayDetail(zonedReport, detailSelection.index, useImperial, use12Hour,
+        function(d) { return Qt.formatDate(d, "ddd MMM d") }, tideInfo)
+      : null)
+
+  // ---- Tides. The nearest station comes from the index shipped with the
+  //      plugin; predictions are fetched while the panel is open on the
+  //      forecast, at most once a day per station, and kept under ~/.local/state (the shell
+  //      rebuilds every plugin service when a file inside the plugin changes).
+  // The one `tides` setting: auto (a station within 100 km), on (the nearest
+  // station at any distance) or off. See Tides.stationFor.
+  readonly property string tidesMode: Tides.normalizeMode(setting("tides", "auto"))
+  property var tideStations: []
+  property var tideCache: ({ version: 1, stations: {} })
+  property bool tideCacheLoaded: false
+  property var tideRequest: null
+  property real tideRetryAt: 0
+
+  // Null when off, or in auto with no station in range: then there is no tide
+  // request, no cache file read or write, and no tide UI.
+  readonly property var tideChoice: dailyForecastReport
+    ? Tides.stationFor(tideStations, dailyForecastReport.latitude, dailyForecastReport.longitude, tidesMode)
+    : null
+  readonly property string tideKey: tideChoice ? tideChoice.station.provider + ":" + tideChoice.station.id : ""
+  readonly property var tideInfo: tideChoice
+    ? { station: tideChoice.station, distanceKm: tideChoice.km, events: Tides.eventsFor(tideCache, tideKey) }
+    : null
+
+  // One line of text below the hourly cards: the station, rising or falling,
+  // and the next high or low (Tides.nextLine). It comes from the cached events
+  // for the station the card uses and never starts a request itself. Empty, and
+  // so taking no space, when tides are inactive, no events are cached, or none
+  // lies after now. `tideNow` moves on once a minute while the panel is open
+  // with a station, so the line follows the tide without any other work.
+  property real tideNow: Date.now()
+  readonly property string tideLine: tideInfo
+    ? Tides.nextLine(tideInfo.station, tideInfo.events, tideNow, Zone.of(zonedReport), useImperial, use12Hour)
+    : ""
+
+  Timer {
+    id: tideNowTimer
+    interval: 60000
+    repeat: true
+    running: root.opened && root.tideChoice !== null
+    onTriggered: root.tideNow = Date.now()
+  }
+
+  onTideKeyChanged: ensureTides()
+  onOpenedChanged: {
+    tideNow = Date.now()
+    ensureTides()
+  }
+  onMainViewChanged: ensureTides()
+
+  // Fetch when the panel is open on the forecast view (the hourly strip draws
+  // the line under the hourly cards), for the station the `tides` setting picks, at
+  // most once a day. No station (off, or auto and out of range) means no key and
+  // no request. Tides.wantsFetch holds the whole decision.
+  function ensureTides() {
+    if (!tideChoice) return
+    if (!Tides.wantsFetch({ opened: root.opened, view: root.mainView, key: tideKey, cacheLoaded: tideCacheLoaded,
+        running: tideProc.running, retryAt: tideRetryAt, cache: tideCache, now: Date.now() })) return
+    var win = Tides.windowFor(zonedReport)
+    if (!win) return
+    var argv = Tides.PROVIDERS[tideChoice.station.provider].request(tideChoice.station.id, win.fromMs, win.toMs)
+    if (!argv) return
+    tideRequest = { key: tideKey, provider: tideChoice.station.provider }
+    tideProc.command = argv
+    tideProc.running = true
+  }
+
+  // A response answers the station it was asked for. If the location moved on
+  // while curl ran it is dropped, and the new station is fetched instead.
+  function finishTideFetch(raw) {
+    var asked = tideRequest
+    tideRequest = null
+    if (asked && Tides.isCurrent(asked, tideKey)) {
+      var events = Model.rejectOversized(raw, Tides.MAX_TIDE_BYTES) ? null : Tides.PROVIDERS[asked.provider].parse(raw)
+      if (events === null) {
+        tideRetryAt = Date.now() + 10 * 60 * 1000
+      } else {
+        tideCache = Tides.withEntry(tideCache, asked.key, events, Date.now())
+        tideCacheFile.setText(Tides.serializeCache(tideCache))
+      }
+    }
+    ensureTides()
+  }
+
+  FileView {
+    id: tideIndexFile
+    path: root.tidesMode !== "off" ? Zone.localPath(Qt.resolvedUrl("tide-stations.json").toString()) : ""
+    printErrors: false
+    onLoaded: root.tideStations = Tides.parseIndex(text())
+    onLoadFailed: root.tideStations = []
+  }
+
+  FileView {
+    id: tideCacheFile
+    path: root.tideChoice ? Quickshell.env("HOME") + "/.local/state/omarchy/detailed-weather-tides.json" : ""
+    atomicWrites: true
+    printErrors: false
+    onLoaded: {
+      root.tideCache = Tides.parseCache(text())
+      root.tideCacheLoaded = true
+      root.ensureTides()
+    }
+    onLoadFailed: {
+      root.tideCache = Tides.parseCache("")
+      root.tideCacheLoaded = true
+      root.ensureTides()
+    }
+  }
+
+  Process {
+    id: tideProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.finishTideFetch(String(text || ""))
+    }
+  }
+
+  function toggleDetail(kind, reportIndex) {
+    detailSelection = Detail.nextSelection(detailSelection, kind, reportIndex)
+  }
+
+  // Phase glyph for a date at the forecast's own place; empty when the report
+  // does not say where it is.
+  function moonGlyph(date) {
+    var day = Moon.reportDay(zonedReport, date, use12Hour)
+    return day ? day.glyph : ""
+  }
+
+  function closeDetail() {
+    detailSelection = ({ kind: "", index: -1 })
+  }
+
+  onDailyForecastReportChanged: if (!dailyForecastReport) closeDetail()
+
   readonly property real carouselFocusAngle: 90
   readonly property int carouselCount: daily.length
   readonly property real carouselStep: carouselCount > 0 ? 360 / carouselCount : 36
@@ -965,10 +1127,14 @@ Panel {
       + "?latitude=" + encodeURIComponent(String(lat))
       + "&longitude=" + encodeURIComponent(String(lon))
       + "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_direction_10m,surface_pressure,weather_code,is_day,cloud_cover,precipitation"
-      + "&hourly=temperature_2m,precipitation_probability,weather_code,is_day"
+      + "&hourly=temperature_2m,precipitation_probability,precipitation,weather_code,is_day"
+      + ",apparent_temperature,wind_speed_10m,wind_gusts_10m,wind_direction_10m,relative_humidity_2m"
+      + ",dew_point_2m,cloud_cover,pressure_msl,visibility,uv_index"
       + "&minutely_15=precipitation,precipitation_probability"
       + "&forecast_minutely_15=16"
-      + "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,precipitation_probability_max"
+      + "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,precipitation_probability_max,precipitation_sum"
+      + ",apparent_temperature_max,apparent_temperature_min,wind_speed_10m_max,wind_gusts_10m_max"
+      + ",wind_direction_10m_dominant,daylight_duration"
       + "&forecast_days=10"
       + "&timezone=auto"
     dailyForecastProc.command = Model.curlGet(url, 5, Model.MAX_JSON_BYTES)
@@ -1539,7 +1705,8 @@ KeyboardPanel {
       }
       onReturnRequested: root.startEditingLocation()
       onCloseRequested: {
-        if (root.mainView === "settings") root.showForecastView()
+        if (root.detailCard) root.closeDetail()
+        else if (root.mainView === "settings") root.showForecastView()
         else root.close()
       }
       onTabRequested: function(direction) { root.switchPanel(direction) }
@@ -1601,6 +1768,74 @@ KeyboardPanel {
           fontFamily: root.bar.fontFamily
           foreground: root.bar.foreground
           onClicked: root.showSettings()
+        }
+      }
+
+      // Detail card. The scrim catches clicks outside the card and closes it.
+      Item {
+        id: detailOverlay
+        visible: root.mainView === "forecast" && !!root.detailCard
+        anchors.top: chromeBar.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        z: 40
+
+        Rectangle {
+          anchors.fill: parent
+          color: Qt.rgba(0, 0, 0, 0.35)
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          onClicked: root.closeDetail()
+        }
+
+        Rectangle {
+          id: detailPanel
+          anchors.centerIn: parent
+          width: Math.min(parent.width - Style.space(32), Style.space(380))
+          height: Math.min(parent.height - Style.space(32), detailBody.implicitHeight + Style.space(32))
+          radius: Math.min(8, Style.cornerRadius)
+          color: Color.popups.background
+          border.width: 1
+          border.color: Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.2)
+
+          // Swallows clicks so they do not reach the scrim.
+          MouseArea { anchors.fill: parent }
+
+          Flickable {
+            anchors.fill: parent
+            anchors.margins: Style.space(16)
+            contentWidth: width
+            contentHeight: detailBody.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+
+            Item {
+              id: detailBody
+              width: parent.width
+              implicitHeight: root.detailSelection.kind === "hour" ? hourCard.implicitHeight : dayCard.implicitHeight
+
+              HourDetail {
+                id: hourCard
+                width: parent.width
+                visible: root.detailSelection.kind === "hour"
+                card: visible ? root.detailCard : null
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+              }
+
+              DayDetail {
+                id: dayCard
+                width: parent.width
+                visible: root.detailSelection.kind === "day"
+                card: visible ? root.detailCard : null
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+              }
+            }
+          }
         }
       }
 
@@ -2495,8 +2730,10 @@ KeyboardPanel {
 
                   if (root.carouselDragDistance < Style.space(7)) {
                     var clickedIndex = root.carouselCardAt(mouse.x, mouse.y)
-                    if (clickedIndex >= 0) root.focusCarouselDay(clickedIndex)
-                    else root.focusCarouselDay(root.carouselSelectedIndex)
+                    if (clickedIndex >= 0) {
+                      root.focusCarouselDay(clickedIndex)
+                      root.toggleDetail("day", root.daily[clickedIndex].reportIndex)
+                    } else root.focusCarouselDay(root.carouselSelectedIndex)
                   } else {
                     var projectedAngle = root.carouselAngle + root.carouselVelocity * 180
                     root.settleCarousel((root.carouselFocusAngle - projectedAngle) / root.carouselStep)
@@ -2533,7 +2770,8 @@ KeyboardPanel {
                     kind: "liquid",
                     level: root.carouselDay.precipProb !== "" && isFinite(Number(root.carouselDay.precipProb))
                       ? Number(root.carouselDay.precipProb) / 100
-                      : -1
+                      : -1,
+                    detail: Model.formatPrecipAmount(root.carouselDay.precipMm, root.useImperial)
                   },
                   { label: "UV", value: root.carouselUv ? root.carouselUv.label : "—", kind: "text", level: -1 },
                   { label: "SUNRISE", value: root.carouselDay.sunrise ? Model.formatClock(root.carouselDay.sunrise, root.use12Hour) : "—", kind: "text", level: -1 },
@@ -2547,7 +2785,7 @@ KeyboardPanel {
                     ? Math.max(0, Math.min(1, Number(modelData.level)))
                     : 0
                   width: (carouselSection.width - Style.space(18)) / 4
-                  height: Style.space(46)
+                  height: Style.space(58)
                   radius: Math.min(Style.space(8), Style.cornerRadius)
                   color: Util.alpha(root.bar.foreground, 0.045)
                   border.width: Math.max(1, Style.space(1))
@@ -2630,6 +2868,18 @@ KeyboardPanel {
                       font.pixelSize: Style.font.bodySmall
                       font.bold: true
                     }
+
+                    Text {
+                      textFormat: Text.PlainText
+                      width: parent.width
+                      horizontalAlignment: Text.AlignHCenter
+                      elide: Text.ElideRight
+                      visible: text !== ""
+                      text: modelData.detail || ""
+                      color: root.dimText
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
                   }
                 }
               }
@@ -2661,9 +2911,15 @@ KeyboardPanel {
                   Layout.fillWidth: true
                   Layout.minimumWidth: 0
                   clip: true
-                  height: root.metricCellHeight + Style.space(32)
+                  height: root.metricCellHeight + Style.space(64)
                   radius: Math.min(4, Style.cornerRadius)
                   color: modelData.isToday ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.1) : Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.05)
+
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.toggleDetail("day", modelData.reportIndex)
+                  }
 
                   Column {
                     width: parent.width
@@ -2680,6 +2936,17 @@ KeyboardPanel {
                       font.family: root.bar.fontFamily
                       font.pixelSize: Style.font.caption
                       font.bold: modelData.isToday
+                    }
+
+                    Text {
+                      textFormat: Text.PlainText
+                      width: parent.width
+                      horizontalAlignment: Text.AlignHCenter
+                      visible: text !== ""
+                      text: root.moonGlyph(modelData.date)
+                      color: root.dimText
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.caption
                     }
 
                     Text {
@@ -2710,6 +2977,17 @@ KeyboardPanel {
                       elide: Text.ElideRight
                       text: root.bareTempForDay(modelData, "min")
                       color: root.dimText
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+
+                    Text {
+                      textFormat: Text.PlainText
+                      width: parent.width
+                      horizontalAlignment: Text.AlignHCenter
+                      elide: Text.ElideRight
+                      text: Model.formatPrecipAmount(modelData.precipMm, root.useImperial)
+                      color: modelData.precipMm > 0 ? root.bar.foreground : root.dimText
                       font.family: root.bar.fontFamily
                       font.pixelSize: Style.font.caption
                     }
@@ -2809,6 +3087,12 @@ KeyboardPanel {
                       color: index === 0 ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.1) : Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.05)
                     }
 
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.toggleDetail("hour", modelData.reportIndex)
+                    }
+
                     Column {
                       id: hourCellColumn
                       width: parent.width
@@ -2853,12 +3137,32 @@ KeyboardPanel {
                         font.family: root.bar.fontFamily
                         font.pixelSize: Style.font.caption
                       }
+                      Text {
+                        textFormat: Text.PlainText
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: Model.formatPrecipAmount(modelData.precipMm, root.useImperial)
+                        color: modelData.precipMm > 0 ? root.bar.foreground : root.dimText
+                        font.family: root.bar.fontFamily
+                        font.pixelSize: Style.font.caption
+                      }
                     }
                   }
                 }
 
                 Item { width: hourlyStrip.edgeInset; height: 1 }
               }
+            }
+
+            // The next high or low, as one line. Hidden (and so no height) when empty.
+            Text {
+              visible: text !== ""
+              textFormat: Text.PlainText
+              width: parent.width
+              elide: Text.ElideRight
+              text: root.tideLine
+              color: root.dimText
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
             }
           }
 
@@ -3383,6 +3687,61 @@ KeyboardPanel {
                 foreground: root.bar.foreground
                 onToggled: root.persistSetting("orbitAutoSpin", !root.orbitAutoSpin)
               }
+            }
+
+            PanelSectionHeader {
+              text: "TIDES"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+            }
+
+            Row {
+              spacing: Style.space(6)
+
+              Repeater {
+                model: [
+                  { id: "auto", label: "Auto" },
+                  { id: "on", label: "On" },
+                  { id: "off", label: "Off" }
+                ]
+
+                Rectangle {
+                  required property var modelData
+                  width: tideModeLabel.implicitWidth + Style.space(16)
+                  height: Style.space(28)
+                  radius: Math.min(4, Style.cornerRadius)
+                  color: root.tidesMode === modelData.id
+                    ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.12)
+                    : "transparent"
+
+                  Text {
+                    textFormat: Text.PlainText
+                    id: tideModeLabel
+                    anchors.centerIn: parent
+                    text: modelData.label
+                    color: root.tidesMode === modelData.id ? root.bar.foreground : root.dimText
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: root.tidesMode === modelData.id
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.persistSetting("tides", modelData.id)
+                  }
+                }
+              }
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "High and low tides in the day card, from NOAA (US) or the Canadian Hydrographic Service. Auto shows them when the nearest tide station is within 100 km of your location; On always uses the nearest station, at any distance; Off never shows them. The card names the station and how far away it is."
+              color: root.dimText
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
             }
 
             PanelSectionHeader {

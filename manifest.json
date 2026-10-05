@@ -33,6 +33,7 @@
       "showBarTemp": false,
       "forecastOrbit": false,
       "orbitAutoSpin": true,
+      "tides": "auto",
       "alertsEnabled": false,
       "alertRadiusKm": 100,
       "alertMinIntensity": "Heavy",
@@ -115,6 +116,14 @@
         "label": "Auto-spin forecast orbit",
         "defaultValue": true,
         "description": "Advance the orbital day carousel after 6.5 seconds without interaction. Pauses while the pointer is over it. Only applies when the orbital forecast is on."
+      },
+      {
+        "key": "tides",
+        "type": "enum",
+        "label": "Tides",
+        "options": ["auto", "on", "off"],
+        "defaultValue": "auto",
+        "description": "High and low tides in the day card, from NOAA (US coasts) or the Canadian Hydrographic Service. Auto shows them when the nearest tide station is within 100 km of your location. On always uses the nearest station, at any distance. Off never shows them. The card names the station and how far away it is. A line under the hourly cards gives the next high or low."
       },
       {
         "key": "alertsEnabled",
