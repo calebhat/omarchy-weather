@@ -55,12 +55,13 @@ rising mark, while cooling flashes ice-blue with a falling mark. Below that:
 - **Today** — remaining hours of the current local day (not a fixed six-cell
   strip). When only a few hours remain, their cards expand evenly across the
   full row with symmetric edges; scroll sideways when the day is long. The
-  first cell is **NOW**.
+  first cell is **NOW**. Each hour shows its chance of rain and the forecast
+  amount (inches with imperial units, millimetres otherwise).
 - **Metrics** — wind (speed and direction), humidity, pressure, UV, air
   quality (US AQI, PM2.5 / PM10), sunrise and sunset. Each block can be
   hidden in settings.
 - **Ten-day forecast** — compact strip of today plus the next nine days
-  (default). Settings → **Orbital forecast** swaps that for a mouse-spinnable
+  (default), each with its forecast rain total. Settings → **Orbital forecast** swaps that for a mouse-spinnable
   orbit around a live detail hub. Drag or flick, scroll the wheel, click any
   day, or use Left/Right (also `h`/`l`). Depth, tilt, opacity, momentum, and a
   spring snap make the ring feel physical. The center and four detail cells
@@ -82,6 +83,40 @@ the visual hit while getting the forecast under your eyes sooner.
 Forecast-panel and bar-pill units follow `auto` (locale and country),
 `metric`, or `imperial`. The bar temperature only shows when **Show
 temperature on the bar** is on.
+
+### Detail cards, moon and tides
+
+Click an hourly card or a day (in the strip or the orbit) for its detail card;
+click it again, click outside, or press Escape to close it. The day card shows
+the moon (phase, illumination, moonrise and moonset, computed locally) and,
+when a tide station is near, that day's highs and lows, with the station's name
+and distance so you can judge it. Tide
+predictions come from NOAA CO-OPS (US coasts and territories) or the Canadian
+Hydrographic Service, using a station index shipped in the plugin
+(`tide-stations.json`, regenerate with `scripts/build-tide-stations.py`). They
+are fetched when the panel opens on the forecast (the line under the hourly cards uses them), at most once a day per station, and
+cached in `~/.local/state/omarchy/detailed-weather-tides.json`. One setting,
+`tides`, controls them: `auto` (the default) shows tides when the nearest
+station is within 100 km of the forecast location, `on` always uses the nearest
+station at any distance, and `off` never does. With `off`, or `auto` and no
+station in range, nothing is requested, cached or drawn.
+
+Under the hourly cards, when tides are active and the cached predictions include
+an event after now, one line gives the next high or low, for example
+`TIDE · Weeks Bay · Falling · Low 9:34 PM (0.0 ft)`: the station, Rising when
+the next event is a high or Falling when it is a low, its time in the forecast's
+own timezone (with the short weekday, `Low Tue 3:10 AM`, when it is not today
+there) and its height in the chosen unit. With tides off, no events, or none
+after now, there is no line and it takes no space.
+
+### Theme colour
+
+Weather icons, rain amounts, UV bands, the day card's high and low, and tide
+highs and lows take their colour from the theme's own `colors.toml` names
+(`yellow`, `blue`, `cyan`, `magenta`, `orange`, `green`, `red`, `muted`). A name
+the theme lacks falls back to the accent tint, and every colour is moved toward
+the foreground until it reads on the theme's background, so light themes stay
+legible. Body text stays the foreground. The choices are in `Palette.js`.
 
 ### Open radar
 
@@ -183,6 +218,7 @@ the bar settings form). `shell.json` hot-reloads on save.
 | `showBarTemp` | `false` | Current temperature next to the bar glyph |
 | `forecastOrbit` | `false` | Orbital ten-day forecast instead of the compact strip |
 | `orbitAutoSpin` | `true` | Advance the day orbit after 6.5 seconds idle |
+| `tides` | `auto` | `auto` (station within 100 km) / `on` (nearest, any distance) / `off` |
 | `alertsEnabled` | `false` | Storm alerts for home |
 | `alertRadiusKm` | `100` | How far around home to sample |
 | `alertMinIntensity` | `Heavy` | `Light` / `Moderate` / `Heavy` / `Severe` |
@@ -203,6 +239,8 @@ The built-in weather widget comes back. `weather.json` is left alone.
 | Source | Used for |
 |--------|----------|
 | Open-Meteo | Current, hourly, daily, air quality, city search |
+| tidesandcurrents.noaa.gov (NOAA CO-OPS) | US only, when tides are active: high/low tide predictions |
+| api-iwls.dfo-mpo.gc.ca (Canadian Hydrographic Service) | Canada only, when tides are active: high/low tide predictions |
 | api.weather.gov (NWS) | US only, storm alerts only: watches and warnings in force, and the local office's probability of precipitation |
 | wttr.in | IP auto-detect when no home coordinates are stored |
 | RainViewer / NOAA / Windy / WU | Opened in the browser by Open radar (user's saved site) |

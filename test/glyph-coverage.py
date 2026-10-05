@@ -37,6 +37,7 @@ from pathlib import Path
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
 # The Private Use Area starts here; anything above is an icon, not text.
 PUA_START = 0xE000
+MOON_GLYPHS = range(0xF0F61, 0xF0F69)
 
 
 def font_path(family="JetBrainsMono Nerd Font"):
@@ -178,6 +179,14 @@ def main():
     if not used:
         print("  (no glyphs found in the QML/JS — has the panel changed shape?)")
         return 0
+
+    # The eight moon-phase glyphs in Moon.js (Material Design moon_*). They are
+    # found by the scan above, but a lost literal would silently drop one.
+    lost = [cp for cp in MOON_GLYPHS if used.get(cp) != "Moon.js"]
+    if lost:
+        for cp in lost:
+            print("  U+%05X is not in Moon.js" % cp)
+        return 1
 
     present = covered(path, set(used))
     missing = sorted(cp for cp in used if cp not in present)
